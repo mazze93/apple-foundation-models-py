@@ -96,8 +96,8 @@ class BaseSession(ContextManagedResource, ABC):
         self._initialize_library()
 
         self._ffi = get_foundationmodels()
-        config = self._build_session_config(instructions, tools)
-        self._session_id = self._ffi.create_session(config)
+        config, tool_dict = self._build_session_config(instructions, tools)
+        self._session_id = self._ffi.create_session(config, tool_dict)
         self._closed = False
         self._config = config
         # Initialize to current transcript length to exclude any initial instructions
@@ -290,7 +290,9 @@ class BaseSession(ContextManagedResource, ABC):
 
         def run_stream() -> None:
             try:
-                self._ffi.generate_stream(prompt, adapter.push, temperature, max_tokens)
+                self._ffi.generate_stream(
+                    self._session_id, prompt, adapter.push, temperature, max_tokens
+                )
             except Exception as exc:  # pragma: no cover - defensive
                 try:
                     adapter.push(exc)
@@ -469,7 +471,7 @@ class BaseSession(ContextManagedResource, ABC):
         """
         self._check_closed()
         # Explicit cast to ensure type checkers see the correct return type
-        return cast(List[Dict[str, Any]], self._ffi.get_transcript())
+        return cast(List[Dict[str, Any]], self._ffi.get_transcript(self._session_id))
 
     @property
     def last_generation_transcript(self) -> List[Dict[str, Any]]:
@@ -524,12 +526,14 @@ class BaseSession(ContextManagedResource, ABC):
 
     def _mark_closed(self) -> None:
         """
-        Mark the session as closed.
+        Mark the session as closed and release its native resources.
 
-        This is used by both Session.close() and AsyncSession.close() to
-        set the closed flag.
+        This is used by both Session.close() and AsyncSession.aclose() to
+        set the closed flag and free this session's entry in the native
+        session registry - it does not affect any other session.
         """
         self._closed = True
+        self._ffi.close_session(self._session_id)
 
     @staticmethod
     def _validate_platform() -> None:
@@ -575,35 +579,35 @@ class BaseSession(ContextManagedResource, ABC):
     def _build_session_config(
         instructions: Optional[str],
         tools: Optional[List[Callable]],
-    ) -> Optional[Dict[str, Any]]:
+    ) -> "tuple[Optional[Dict[str, Any]], Optional[Dict[str, Callable]]]":
         """
-        Build session configuration dictionary and register tools.
+        Build session configuration and the name->callable tool dict.
+
+        Tools are bound to this session only when create_session() is
+        called with the returned dict - they are never visible to or
+        shared with any other session.
 
         Args:
             instructions: Optional system instructions
-            tools: Optional list of tool functions to register
+            tools: Optional list of tool functions to make available
 
         Returns:
-            Configuration dictionary or None if empty
+            (config dict or None if empty, tool dict or None if no tools)
         """
-        # Register tools if provided
+        tool_dict: Optional[Dict[str, Callable]] = None
         if tools:
             from .tools import register_tool_for_function
 
-            # Build tool dictionary with function objects
             tool_dict = {}
             for func in tools:
                 schema = register_tool_for_function(func)
                 tool_name = schema["name"]
                 tool_dict[tool_name] = func
 
-            # Register with FFI
-            get_foundationmodels().register_tools(tool_dict)
-
         config = {}
         if instructions is not None:
             config["instructions"] = instructions
-        return config if config else None
+        return (config if config else None, tool_dict)
 
     @staticmethod
     def check_availability() -> Availability:

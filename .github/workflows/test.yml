@@ -53,8 +53,8 @@ jobs:
           source .test-venv/bin/activate
           python -c "
           import applefoundationmodels as afm
-          status = afm.Client.check_availability()
-          reason = afm.Client.get_availability_reason()
+          status = afm.Session.check_availability()
+          reason = afm.Session.get_availability_reason()
           print(f'Availability Status: {status}')
           print(f'Reason: {reason}')
           print(f'Available: {status == afm.Availability.AVAILABLE}')

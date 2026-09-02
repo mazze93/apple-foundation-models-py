@@ -80,6 +80,60 @@ class TestSessionLifecycle:
         session2.close()
 
 
+class TestClosedSessionErrors:
+    """Tests for operations on a closed session."""
+
+    def test_double_close_is_idempotent(self, check_availability):
+        """Calling close() twice should not raise."""
+        session = applefoundationmodels.Session()
+        session.close()
+        session.close()  # should be a no-op, not an error
+
+    def test_generate_after_close_raises(self, check_availability):
+        """generate() on a closed session should raise RuntimeError."""
+        session = applefoundationmodels.Session()
+        session.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            session.generate("Hello")
+
+    def test_generate_stream_after_close_raises(self, check_availability):
+        """generate(stream=True) on a closed session should raise eagerly."""
+        session = applefoundationmodels.Session()
+        session.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            # The closed check runs before the generator is returned, so this
+            # raises immediately rather than on first next().
+            session.generate("Hello", stream=True)
+
+    def test_get_history_after_close_raises(self, check_availability):
+        """get_history() on a closed session should raise RuntimeError."""
+        session = applefoundationmodels.Session()
+        session.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            session.get_history()
+
+    def test_clear_history_after_close_raises(self, check_availability):
+        """clear_history() on a closed session should raise RuntimeError."""
+        session = applefoundationmodels.Session()
+        session.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            session.clear_history()
+
+    def test_transcript_after_close_raises(self, check_availability):
+        """transcript property on a closed session should raise RuntimeError."""
+        session = applefoundationmodels.Session()
+        session.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            _ = session.transcript
+
+    def test_close_via_context_manager_then_reuse_raises(self, check_availability):
+        """A session closed by its context manager should reject further use."""
+        with applefoundationmodels.Session() as session:
+            pass
+        with pytest.raises(RuntimeError, match="closed"):
+            session.generate("Hello")
+
+
 class TestSessionCreation:
     """Tests for session creation with parameters."""
 

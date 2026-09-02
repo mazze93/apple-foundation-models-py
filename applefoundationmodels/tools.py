@@ -18,7 +18,6 @@ from typing import (
 )
 from .exceptions import ToolCallError
 
-
 # Type mapping for efficient schema generation
 # Maps Python types and their string names to JSON schema types
 _TYPE_MAP = {

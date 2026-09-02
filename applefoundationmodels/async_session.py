@@ -227,6 +227,7 @@ class AsyncSession(BaseSession, AsyncContextManagedResource):
         async with self._async_generation_context() as start_length:
             text = await self._call_ffi(
                 self._ffi.generate,
+                self._session_id,
                 prompt,
                 temperature,
                 max_tokens,
@@ -245,6 +246,7 @@ class AsyncSession(BaseSession, AsyncContextManagedResource):
             json_schema = normalize_schema(schema)
             result = await self._call_ffi(
                 self._ffi.generate_structured,
+                self._session_id,
                 prompt,
                 json_schema,
                 temperature,
@@ -279,7 +281,7 @@ class AsyncSession(BaseSession, AsyncContextManagedResource):
             ...     print(f"{msg['role']}: {msg['content']}")
         """
         self._check_closed()
-        result = await self._call_ffi(self._ffi.get_history)
+        result = await self._call_ffi(self._ffi.get_history, self._session_id)
         return cast(List[Dict[str, Any]], result)
 
     async def clear_history(self) -> None:
@@ -289,7 +291,7 @@ class AsyncSession(BaseSession, AsyncContextManagedResource):
         Removes all messages from the session while keeping the session active.
         """
         self._check_closed()
-        await self._call_ffi(self._ffi.clear_history)
+        await self._call_ffi(self._ffi.clear_history, self._session_id)
         # Reset to current transcript length (may include persistent instructions)
         self._last_transcript_length = len(self.transcript)
 

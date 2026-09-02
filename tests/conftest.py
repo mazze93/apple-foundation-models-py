@@ -25,6 +25,15 @@ def session(check_availability):
     session.close()
 
 
+@pytest.fixture
+async def async_session(check_availability):
+    """Provide a applefoundationmodels AsyncSession instance."""
+    # Create session without instructions to avoid transcript pollution
+    session = applefoundationmodels.AsyncSession(instructions=None)
+    yield session
+    await session.aclose()
+
+
 # Test helper functions
 
 

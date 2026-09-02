@@ -14,13 +14,68 @@ import FoundationModels
 // MARK: - Global State
 
 private var isInitialized = false
-private var currentSession: LanguageModelSession?
-private var sessionInstructions: String?
-private var registeredTools: [any Tool] = []
+
+/// A single native session's identity and the parameters it was created
+/// with, kept alongside the session so `clear_history` can rebuild an
+/// equivalent session (Apple's API has no in-place history reset) without
+/// losing that session's own instructions/tools.
+@available(macOS 26.0, *)
+private struct SessionEntry {
+    var session: LanguageModelSession
+    var instructions: String?
+    var tools: [any Tool]
+}
+
+/// Registry of every live session, keyed by the id handed back from
+/// `apple_ai_create_session`. Each entry is fully independent: no state is
+/// shared between sessions. Guarded by `sessionRegistryLock` since Python
+/// can call in from multiple OS threads (sync streaming runs on a
+/// background thread per call).
+@available(macOS 26.0, *)
+private var sessionRegistry: [Int32: SessionEntry] = [:]
+private let sessionRegistryLock = NSLock()
+private var nextSessionID: Int32 = 1
+
+@available(macOS 26.0, *)
+private func allocateSessionID(for entry: SessionEntry) -> Int32 {
+    sessionRegistryLock.lock()
+    defer { sessionRegistryLock.unlock() }
+    let id = nextSessionID
+    nextSessionID += 1
+    sessionRegistry[id] = entry
+    return id
+}
+
+@available(macOS 26.0, *)
+private func getSessionEntry(_ sessionID: Int32) -> SessionEntry? {
+    sessionRegistryLock.lock()
+    defer { sessionRegistryLock.unlock() }
+    return sessionRegistry[sessionID]
+}
+
+@available(macOS 26.0, *)
+private func replaceSessionEntry(_ sessionID: Int32, with entry: SessionEntry) {
+    sessionRegistryLock.lock()
+    defer { sessionRegistryLock.unlock() }
+    sessionRegistry[sessionID] = entry
+}
+
+private func removeSessionEntry(_ sessionID: Int32) {
+    sessionRegistryLock.lock()
+    defer { sessionRegistryLock.unlock() }
+    sessionRegistry.removeValue(forKey: sessionID)
+}
+
+private func clearSessionRegistry() {
+    sessionRegistryLock.lock()
+    defer { sessionRegistryLock.unlock() }
+    sessionRegistry.removeAll()
+    nextSessionID = 1
+}
 
 // MARK: - Error Codes
 
-public enum AIResult: Int32, CaseIterable {
+public enum AIResult: Int32, CaseIterable, Error {
     case success = 0
     case errorInitFailed = -1
     case errorNotAvailable = -2
@@ -29,6 +84,7 @@ public enum AIResult: Int32, CaseIterable {
     case errorJSONParse = -5
     case errorGeneration = -6
     case errorTimeout = -7
+    case errorSessionNotFound = -8
     case errorGuardrailViolation = -10
     case errorToolNotFound = -11
     case errorToolExecution = -12
@@ -56,6 +112,7 @@ public enum AIAvailability: Int32 {
 
 /// C-compatible callback for Python tool execution
 public typealias ToolCallback = @convention(c) (
+    Int32,  // session_id
     UnsafePointer<CChar>?,  // tool_name
     UnsafePointer<CChar>?,  // arguments_json
     UnsafeMutablePointer<CChar>?,  // result_buffer
@@ -82,6 +139,7 @@ private var toolCallback: ToolCallback? {
 /// Python tool wrapper that bridges Swift Tool protocol to Python callbacks
 @available(macOS 26.0, *)
 struct PythonToolWrapper: Tool, Sendable {
+    let sessionID: Int32
     let toolName: String
     let toolDescription: String
     let dynamicSchema: DynamicGenerationSchema
@@ -124,7 +182,7 @@ struct PythonToolWrapper: Tool, Sendable {
 
             let result = argsJson.withCString { argsPtr in
                 toolName.withCString { namePtr in
-                    callback(namePtr, argsPtr, resultBuffer, bufferSize)
+                    callback(sessionID, namePtr, argsPtr, resultBuffer, bufferSize)
                 }
             }
 
@@ -221,69 +279,39 @@ private func mapGenerationErrorToCode(_ error: Error) -> AIResult {
 }
 #endif
 
-/// Create or get a session with specified parameters
-/// - Parameters:
-///   - instructions: Optional instructions override (uses sessionInstructions if nil)
-///   - tools: Tools to register with session (defaults to empty array)
-///   - forceNew: If true, always create new session; if false, return existing if available
-/// - Returns: The session instance
+/// Build a brand-new, independent `LanguageModelSession` for the given
+/// instructions/tools. Pure - never touches the session registry, so it's
+/// safe to use both for first creation and for rebuilding a session with
+/// the same parameters (e.g. `clear_history`).
 @available(macOS 26.0, *)
-private func createSession(
-    instructions: String? = nil,
-    tools: [any Tool] = [],
-    forceNew: Bool = false
+private func buildSession(
+    instructions: String?,
+    tools: [any Tool]
 ) -> LanguageModelSession {
-    // Return existing session if available and not forcing new
-    if !forceNew, let session = currentSession {
-        return session
-    }
-
-    // Determine which instructions to use
-    let effectiveInstructions = instructions ?? sessionInstructions
-
-    // Create session with appropriate initializer based on what's provided
     let session: LanguageModelSession
-    switch (effectiveInstructions, tools.isEmpty) {
+    switch (instructions, tools.isEmpty) {
     case (let inst?, false):
-        // Both instructions and tools
         session = LanguageModelSession(
             model: SystemLanguageModel.default,
             tools: tools,
             instructions: { inst }
         )
     case (let inst?, true):
-        // Instructions only
         session = LanguageModelSession(
             model: SystemLanguageModel.default,
             instructions: { inst }
         )
     case (nil, false):
-        // Tools only
         session = LanguageModelSession(
             model: SystemLanguageModel.default,
             tools: tools
         )
     case (nil, true):
-        // Neither instructions nor tools
         session = LanguageModelSession(
             model: SystemLanguageModel.default
         )
     }
-
-    currentSession = session
     return session
-}
-
-/// Get existing session or create a new one with stored instructions
-@available(macOS 26.0, *)
-private func getOrCreateSession() -> LanguageModelSession {
-    return createSession(forceNew: false)
-}
-
-/// Create a new session, replacing any existing one
-@available(macOS 26.0, *)
-private func createNewSession() -> LanguageModelSession {
-    return createSession(forceNew: true)
 }
 
 // MARK: - Initialization
@@ -313,8 +341,7 @@ public func appleAIInit() -> Int32 {
 
 @_cdecl("apple_ai_cleanup")
 public func appleAICleanup() {
-    currentSession = nil
-    sessionInstructions = nil
+    clearSessionRegistry()
     isInitialized = false
 }
 
@@ -371,10 +398,68 @@ public func appleAIGetVersion() -> UnsafeMutablePointer<CChar>? {
     return strdup("1.0.0-foundationmodels")
 }
 
-// MARK: - Tool Management
+// MARK: - Session Management
 
-@_cdecl("apple_ai_register_tools")
-public func appleAIRegisterTools(
+/// Parse a JSON array of `{name, description, parameters}` tool
+/// definitions into `PythonToolWrapper`s bound to `sessionID`. Returns
+/// `.success([])` for a nil/empty `toolsJson`.
+@available(macOS 26.0, *)
+private func parseTools(
+    toolsJson: UnsafePointer<CChar>?,
+    sessionID: Int32
+) -> Result<[any Tool], AIResult> {
+    guard let jsonPtr = toolsJson else {
+        return .success([])
+    }
+
+    let jsonString = String(cString: jsonPtr)
+    guard let jsonData = jsonString.data(using: .utf8),
+          let toolsArray = try? JSONSerialization.jsonObject(with: jsonData, options: []) as? [[String: Any]] else {
+        return .failure(.errorJSONParse)
+    }
+
+    var tools: [any Tool] = []
+    for (index, toolDef) in toolsArray.enumerated() {
+        guard let name = toolDef["name"] as? String else {
+            print("ERROR: Tool at index \(index) missing required 'name' field")
+            return .failure(.errorInvalidParams)
+        }
+        guard let description = toolDef["description"] as? String else {
+            print("ERROR: Tool '\(name)' at index \(index) missing required 'description' field")
+            return .failure(.errorInvalidParams)
+        }
+        guard let parameters = toolDef["parameters"] as? [String: Any] else {
+            print("ERROR: Tool '\(name)' at index \(index) missing required 'parameters' field")
+            return .failure(.errorInvalidParams)
+        }
+
+        let conversionResult = convertJSONSchemaToDynamic(parameters, name: "\(name)_params")
+        guard case .success(let dynamicSchema) = conversionResult else {
+            if case .failure(let error) = conversionResult {
+                print("ERROR: \(error.message)")
+            }
+            return .failure(.errorJSONParse)
+        }
+
+        tools.append(PythonToolWrapper(
+            sessionID: sessionID,
+            toolName: name,
+            toolDescription: description,
+            dynamicSchema: dynamicSchema
+        ))
+    }
+
+    return .success(tools)
+}
+
+/// Create a brand-new, fully independent session. Unlike the pre-registry
+/// design, nothing here is shared with any other session: its instructions,
+/// its tools, and its conversation state all live only under the returned
+/// session_id.
+/// - Returns: A positive session_id on success, or a negative AIResult error code.
+@_cdecl("apple_ai_create_session")
+public func appleAICreateSession(
+    instructionsJson: UnsafePointer<CChar>?,
     toolsJson: UnsafePointer<CChar>?,
     callback: ToolCallback?
 ) -> Int32 {
@@ -384,103 +469,65 @@ public func appleAIRegisterTools(
 
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
-        guard let jsonPtr = toolsJson,
-              let callback = callback else {
+        var instructions: String? = nil
+        if let jsonPtr = instructionsJson {
+            let jsonString = String(cString: jsonPtr)
+            if let jsonData = jsonString.data(using: .utf8),
+               let config = try? JSONDecoder().decode([String: String].self, from: jsonData),
+               let inst = config["instructions"] {
+                instructions = inst
+            }
+        }
+
+        if toolsJson != nil {
+            guard let callback = callback else {
+                return AIResult.errorInvalidParams.rawValue
+            }
+            // The dispatcher itself is stateless (session_id disambiguates
+            // on every call), so one process-wide function pointer is fine.
+            toolCallback = callback
+        }
+
+        // Reserve the id first (tools need it to route callbacks), then
+        // parse tools against it, then register the entry only once the
+        // session is fully built - a failure never leaves a partial entry.
+        let sessionID = allocateSessionID(for: SessionEntry(
+            session: buildSession(instructions: instructions, tools: []),
+            instructions: instructions,
+            tools: []
+        ))
+
+        let toolsResult = parseTools(toolsJson: toolsJson, sessionID: sessionID)
+        guard case .success(let tools) = toolsResult else {
+            removeSessionEntry(sessionID)
+            if case .failure(let code) = toolsResult {
+                return code.rawValue
+            }
             return AIResult.errorInvalidParams.rawValue
         }
 
-        let jsonString = String(cString: jsonPtr)
-        guard let jsonData = jsonString.data(using: .utf8),
-              let toolsArray = try? JSONSerialization.jsonObject(with: jsonData, options: []) as? [[String: Any]] else {
-            return AIResult.errorJSONParse.rawValue
-        }
+        let session = tools.isEmpty
+            ? getSessionEntry(sessionID)!.session
+            : buildSession(instructions: instructions, tools: tools)
+        replaceSessionEntry(sessionID, with: SessionEntry(
+            session: session,
+            instructions: instructions,
+            tools: tools
+        ))
 
-        // Store callback
-        toolCallback = callback
-
-        // Clear existing tools
-        registeredTools.removeAll()
-
-        // Create PythonToolWrapper for each tool - fail fast on any error
-        for (index, toolDef) in toolsArray.enumerated() {
-            // Validate required fields
-            guard let name = toolDef["name"] as? String else {
-                print("ERROR: Tool at index \(index) missing required 'name' field")
-                registeredTools.removeAll()
-                return AIResult.errorInvalidParams.rawValue
-            }
-
-            guard let description = toolDef["description"] as? String else {
-                print("ERROR: Tool '\(name)' at index \(index) missing required 'description' field")
-                registeredTools.removeAll()
-                return AIResult.errorInvalidParams.rawValue
-            }
-
-            guard let parameters = toolDef["parameters"] as? [String: Any] else {
-                print("ERROR: Tool '\(name)' at index \(index) missing required 'parameters' field")
-                registeredTools.removeAll()
-                return AIResult.errorInvalidParams.rawValue
-            }
-
-            // Convert JSON Schema to DynamicGenerationSchema - fail fast if conversion fails
-            let conversionResult = convertJSONSchemaToDynamic(parameters, name: "\(name)_params")
-            guard case .success(let dynamicSchema) = conversionResult else {
-                if case .failure(let error) = conversionResult {
-                    print("ERROR: \(error.message)")
-                }
-                registeredTools.removeAll()
-                return AIResult.errorJSONParse.rawValue
-            }
-
-            let tool = PythonToolWrapper(
-                toolName: name,
-                toolDescription: description,
-                dynamicSchema: dynamicSchema
-            )
-            registeredTools.append(tool)
-        }
-
-        return AIResult.success.rawValue
+        return sessionID
     }
     #endif
 
     return AIResult.errorNotAvailable.rawValue
 }
 
-// MARK: - Session Management
-
-@_cdecl("apple_ai_create_session")
-public func appleAICreateSession(
-    instructionsJson: UnsafePointer<CChar>?
-) -> Int32 {
-    guard isInitialized else {
-        return AIResult.errorInitFailed.rawValue
-    }
-
-    #if canImport(FoundationModels)
-    if #available(macOS 26.0, *) {
-        // Parse instructions if provided
-        if let jsonPtr = instructionsJson {
-            let jsonString = String(cString: jsonPtr)
-            if let jsonData = jsonString.data(using: .utf8),
-               let config = try? JSONDecoder().decode([String: String].self, from: jsonData),
-               let inst = config["instructions"] {
-                sessionInstructions = inst
-            }
-        }
-
-        // Create session with stored instructions and registered tools
-        _ = createSession(
-            instructions: sessionInstructions,
-            tools: registeredTools,
-            forceNew: true
-        )
-
-        return AIResult.success.rawValue
-    }
-    #endif
-
-    return AIResult.errorNotAvailable.rawValue
+/// Release a session's native resources. Safe to call more than once or on
+/// an id that was never valid (both are no-ops that report success).
+@_cdecl("apple_ai_close_session")
+public func appleAICloseSession(sessionID: Int32) -> Int32 {
+    removeSessionEntry(sessionID)
+    return AIResult.success.rawValue
 }
 
 // MARK: - Generation
@@ -493,6 +540,7 @@ public func appleAICreateSession(
 /// - Returns: JSON response or error message
 @_cdecl("apple_ai_generate")
 public func appleAIGenerate(
+    sessionID: Int32,
     prompt: UnsafePointer<CChar>,
     temperature: Double,
     maxTokens: Int32
@@ -503,6 +551,9 @@ public func appleAIGenerate(
 
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
+        guard let entry = getSessionEntry(sessionID) else {
+            return createErrorResponse("Session \(sessionID) not found", errorCode: .errorSessionNotFound)
+        }
         let promptString = String(cString: prompt)
 
         // Use semaphore for async coordination
@@ -511,8 +562,7 @@ public func appleAIGenerate(
 
         Task {
             do {
-                // Get or create session
-                let session = getOrCreateSession()
+                let session = entry.session
 
                 // Configure generation options
                 let options = GenerationOptions(
@@ -550,11 +600,13 @@ public func appleAIGenerate(
     return createErrorResponse("FoundationModels not available")
 }
 
-// Streaming callback type
-public typealias StreamCallback = @convention(c) (UnsafePointer<CChar>?) -> Void
+// Streaming callback type. session_id lets a caller running several
+// concurrently-streaming sessions route each chunk to the right consumer.
+public typealias StreamCallback = @convention(c) (Int32, UnsafePointer<CChar>?) -> Void
 
 /// Generate streaming text response
 /// - Parameters:
+///   - sessionID: The session to generate on
 ///   - prompt: User prompt as C string
 ///   - temperature: Sampling temperature (0.0 to 2.0)
 ///   - maxTokens: Maximum tokens to generate
@@ -562,6 +614,7 @@ public typealias StreamCallback = @convention(c) (UnsafePointer<CChar>?) -> Void
 /// - Returns: Result code (0 = success, negative = error)
 @_cdecl("apple_ai_generate_stream")
 public func appleAIGenerateStream(
+    sessionID: Int32,
     prompt: UnsafePointer<CChar>,
     temperature: Double,
     maxTokens: Int32,
@@ -573,6 +626,11 @@ public func appleAIGenerateStream(
 
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
+        guard let entry = getSessionEntry(sessionID) else {
+            cb(sessionID, strdup("Session \(sessionID) not found"))
+            cb(sessionID, nil)
+            return AIResult.errorSessionNotFound.rawValue
+        }
         let promptString = String(cString: prompt)
 
         let semaphore = DispatchSemaphore(value: 0)
@@ -580,8 +638,7 @@ public func appleAIGenerateStream(
 
         Task {
             do {
-                // Get or create session
-                let session = getOrCreateSession()
+                let session = entry.session
 
                 // Configure generation options
                 let options = GenerationOptions(
@@ -604,7 +661,7 @@ public func appleAIGenerateStream(
                     if currentContent.count > previousContent.count {
                         let delta = String(currentContent.dropFirst(previousContent.count))
                         if !delta.isEmpty {
-                            cb(strdup(delta))
+                            cb(sessionID, strdup(delta))
                         }
                     }
 
@@ -612,7 +669,7 @@ public func appleAIGenerateStream(
                 }
 
                 // Signal end of stream
-                cb(nil)
+                cb(sessionID, nil)
 
             } catch {
                 // Map error to specific error code
@@ -621,12 +678,12 @@ public func appleAIGenerateStream(
                 // Use safe JSON serialization for error messages
                 let errorMessage = "Error: \(error.localizedDescription)"
                 if let errorJson = createErrorResponse(errorMessage, errorCode: errorCode) {
-                    cb(errorJson)
+                    cb(sessionID, errorJson)
                     // Note: callback takes ownership, will be freed by caller
                 } else {
-                    cb(strdup(fallbackErrorJSON(code: errorCode)))
+                    cb(sessionID, strdup(fallbackErrorJSON(code: errorCode)))
                 }
-                cb(nil)
+                cb(sessionID, nil)
                 resultCode = errorCode
             }
             semaphore.signal()
@@ -637,8 +694,8 @@ public func appleAIGenerateStream(
     }
     #endif
 
-    cb(strdup("FoundationModels not available"))
-    cb(nil)
+    cb(sessionID, strdup("FoundationModels not available"))
+    cb(sessionID, nil)
     return AIResult.errorNotAvailable.rawValue
 }
 
@@ -647,16 +704,17 @@ public func appleAIGenerateStream(
 /// Get the session transcript
 /// - Returns: JSON array of transcript entries or error message
 @_cdecl("apple_ai_get_transcript")
-public func appleAIGetTranscript() -> UnsafeMutablePointer<CChar>? {
+public func appleAIGetTranscript(sessionID: Int32) -> UnsafeMutablePointer<CChar>? {
     guard isInitialized else {
         return createErrorResponse("Not initialized")
     }
 
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
-        guard let session = currentSession else {
-            return createErrorResponse("No active session")
+        guard let entry = getSessionEntry(sessionID) else {
+            return createErrorResponse("Session \(sessionID) not found", errorCode: .errorSessionNotFound)
         }
+        let session = entry.session
 
         // Use semaphore for async coordination
         let semaphore = DispatchSemaphore(value: 0)
@@ -940,6 +998,7 @@ private func extractValue(from content: GeneratedContent) throws -> Any {
 /// - Returns: JSON object conforming to schema, or error message
 @_cdecl("apple_ai_generate_structured")
 public func appleAIGenerateStructured(
+    sessionID: Int32,
     prompt: UnsafePointer<CChar>,
     schemaJson: UnsafePointer<CChar>,
     temperature: Double,
@@ -951,6 +1010,9 @@ public func appleAIGenerateStructured(
 
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
+        guard let entry = getSessionEntry(sessionID) else {
+            return createErrorResponse("Session \(sessionID) not found", errorCode: .errorSessionNotFound)
+        }
         let promptString = String(cString: prompt)
         let schemaString = String(cString: schemaJson)
 
@@ -975,8 +1037,7 @@ public func appleAIGenerateStructured(
 
         Task {
             do {
-                // Get or create session
-                let session = getOrCreateSession()
+                let session = entry.session
 
                 // Configure generation options
                 let options = GenerationOptions(
@@ -1038,10 +1099,10 @@ public func appleAIFreeString(ptr: UnsafeMutablePointer<CChar>?) {
 // MARK: - History Management
 
 @_cdecl("apple_ai_get_history")
-public func appleAIGetHistory() -> UnsafeMutablePointer<CChar>? {
+public func appleAIGetHistory(sessionID: Int32) -> UnsafeMutablePointer<CChar>? {
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
-        guard currentSession != nil else {
+        guard getSessionEntry(sessionID) != nil else {
             return strdup("[]")
         }
 
@@ -1055,11 +1116,19 @@ public func appleAIGetHistory() -> UnsafeMutablePointer<CChar>? {
 }
 
 @_cdecl("apple_ai_clear_history")
-public func appleAIClearHistory() {
-    // Clear by creating a new session
+public func appleAIClearHistory(sessionID: Int32) {
+    // Apple's API has no in-place history reset, so rebuild a fresh session
+    // with this session's own instructions/tools and keep the same id -
+    // other sessions are untouched.
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
-        currentSession = createNewSession()
+        guard let entry = getSessionEntry(sessionID) else { return }
+        let newSession = buildSession(instructions: entry.instructions, tools: entry.tools)
+        replaceSessionEntry(sessionID, with: SessionEntry(
+            session: newSession,
+            instructions: entry.instructions,
+            tools: entry.tools
+        ))
     }
     #endif
 }

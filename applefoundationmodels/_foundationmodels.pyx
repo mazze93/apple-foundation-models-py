@@ -133,47 +133,18 @@ def is_ready() -> bool:
 
 
 # ============================================================================
-# Session management
-# ============================================================================
-
-def create_session(config: Optional[Dict[str, Any]] = None) -> int:
-    """
-    Create a new AI session.
-
-    Args:
-        config: Optional configuration dictionary with 'instructions' key
-
-    Returns:
-        Session ID (always 0 for single global session)
-
-    Raises:
-        InitializationError: If session creation fails
-    """
-    cdef bytes config_json_bytes = None
-    cdef const char *config_json = NULL
-    cdef int32_t result
-
-    if config:
-        config_json_str = json.dumps(config)
-        config_json_bytes = _encode_string(config_json_str)
-        config_json = config_json_bytes
-
-    with nogil:
-        result = apple_ai_create_session(config_json)
-
-    _check_result(result)
-    return 0  # Always returns 0 for single global session
-
-
-# ============================================================================
 # Tool calling
 # ============================================================================
 
-# Global storage for tool functions
+# Tool functions registered per-session: {session_id: {tool_name: callable}}.
+# Populated by create_session() before the session handle is even known to
+# Python isn't possible, so the entry is added right after the FFI call
+# returns a session_id (see create_session below).
 cdef object _registered_tools = {}
 
 
 cdef int32_t _tool_callback_wrapper(
+    int32_t session_id,
     const char *tool_name,
     const char *arguments_json,
     char *result_buffer,
@@ -182,7 +153,10 @@ cdef int32_t _tool_callback_wrapper(
     """
     C callback wrapper for tool execution.
 
-    Called from Swift when the model wants to execute a tool.
+    Called from Swift when the model wants to execute a tool. session_id
+    scopes the lookup to that session's own registered tools, so two
+    sessions with same-named tools never cross-execute each other's
+    functions.
     """
     global _registered_tools
 
@@ -194,8 +168,9 @@ cdef int32_t _tool_callback_wrapper(
         name_str = tool_name.decode('utf-8')
         args_str = arguments_json.decode('utf-8')
 
-        # Look up tool function
-        if name_str not in _registered_tools:
+        # Look up tool function, scoped to this session
+        session_tools = _registered_tools.get(session_id, {})
+        if name_str not in session_tools:
             error_msg = f"Tool '{name_str}' not found"
             error_bytes = error_msg.encode('utf-8')
             if len(error_bytes) < buffer_size:
@@ -204,7 +179,7 @@ cdef int32_t _tool_callback_wrapper(
                 result_buffer[len(error_bytes)] = 0
             return -11  # AI_ERROR_TOOL_NOT_FOUND
 
-        tool_func = _registered_tools[name_str]
+        tool_func = session_tools[name_str]
 
         # Parse arguments
         args_dict = json.loads(args_str)
@@ -257,46 +232,90 @@ cdef int32_t _tool_callback_wrapper(
         return -99  # AI_ERROR_UNKNOWN
 
 
-def register_tools(tools: Dict[str, Callable]) -> None:
+# ============================================================================
+# Session management
+# ============================================================================
+
+def create_session(
+    config: Optional[Dict[str, Any]] = None,
+    tools: Optional[Dict[str, Callable]] = None,
+) -> int:
     """
-    Register tool functions for model to call.
+    Create a new, fully independent AI session.
 
     Args:
-        tools: Dictionary mapping tool names to callable functions
+        config: Optional configuration dictionary with 'instructions' key
+        tools: Optional dictionary mapping tool names to callable functions,
+            bound to this session only - other sessions never see them and
+            are never affected by them.
+
+    Returns:
+        A positive session ID uniquely identifying this session. Pass it to
+        every other function in this module that takes a session_id.
 
     Raises:
-        InvalidParametersError: If registration fails
+        InitializationError: If session creation fails
     """
     global _registered_tools
 
-    # Store tools globally
-    _registered_tools = tools.copy()
-
-    # Build tools JSON for Swift layer
-    tools_list = []
-    for name, func in tools.items():
-        # Tool metadata will be added by Python layer
-        # For now, just pass the names
-        tools_list.append({
-            "name": name,
-            "description": getattr(func, "_tool_description", ""),
-            "parameters": getattr(func, "_tool_parameters", {})
-        })
-
-    tools_json_str = json.dumps(tools_list)
-    cdef bytes tools_json_bytes = _encode_string(tools_json_str)
-    cdef const char *tools_json = tools_json_bytes
+    cdef bytes config_json_bytes = None
+    cdef const char *config_json = NULL
+    cdef bytes tools_json_bytes = None
+    cdef const char *tools_json = NULL
     cdef int32_t result
 
+    if config:
+        config_json_str = json.dumps(config)
+        config_json_bytes = _encode_string(config_json_str)
+        config_json = config_json_bytes
+
+    if tools:
+        tools_list = [
+            {
+                "name": name,
+                "description": getattr(func, "_tool_description", ""),
+                "parameters": getattr(func, "_tool_parameters", {}),
+            }
+            for name, func in tools.items()
+        ]
+        tools_json_str = json.dumps(tools_list)
+        tools_json_bytes = _encode_string(tools_json_str)
+        tools_json = tools_json_bytes
+
     with nogil:
-        result = apple_ai_register_tools(tools_json, _tool_callback_wrapper)
+        result = apple_ai_create_session(config_json, tools_json, _tool_callback_wrapper)
 
-    _check_result(result)
+    if result <= 0:
+        raise_for_error_code(result, "Session creation failed")
+
+    if tools:
+        _registered_tools[result] = tools.copy()
+
+    return result
 
 
-def get_transcript() -> list:
+def close_session(session_id: int) -> None:
     """
-    Get the session transcript including tool calls.
+    Release a session's native resources. Safe to call more than once.
+
+    Args:
+        session_id: The session ID returned by create_session()
+    """
+    global _registered_tools
+
+    cdef int32_t sid = session_id
+    with nogil:
+        apple_ai_close_session(sid)
+
+    _registered_tools.pop(session_id, None)
+
+
+def get_transcript(session_id: int) -> list:
+    """
+    Get a session's transcript including tool calls.
+
+    Args:
+        session_id: The session ID returned by create_session()
 
     Returns:
         List of transcript entries
@@ -304,10 +323,11 @@ def get_transcript() -> list:
     Raises:
         GenerationError: If transcript retrieval fails
     """
+    cdef int32_t sid = session_id
     cdef char *transcript_json
 
     with nogil:
-        transcript_json = apple_ai_get_transcript()
+        transcript_json = apple_ai_get_transcript(sid)
 
     if transcript_json == NULL:
         raise_for_error_code(-6, "Failed to get transcript")
@@ -324,14 +344,16 @@ def get_transcript() -> list:
 # ============================================================================
 
 def generate(
+    session_id: int,
     prompt: str,
     temperature: float = 1.0,
     max_tokens: int = 1024
 ) -> str:
     """
-    Generate text response for a prompt.
+    Generate text response for a prompt on a specific session.
 
     Args:
+        session_id: The session ID returned by create_session()
         prompt: Input text prompt
         temperature: Sampling temperature (0.0-2.0)
         max_tokens: Maximum tokens to generate
@@ -342,7 +364,9 @@ def generate(
     Raises:
         GenerationError: If generation fails
         InvalidParametersError: If parameters are invalid
+        SessionNotFoundError: If session_id does not identify a live session
     """
+    cdef int32_t sid = session_id
     cdef bytes prompt_bytes = _encode_string(prompt)
     cdef const char *prompt_c = prompt_bytes
     cdef char *result_c
@@ -351,7 +375,7 @@ def generate(
     cdef int32_t tokens_c = max_tokens
 
     with nogil:
-        result_c = apple_ai_generate(prompt_c, temp_c, tokens_c)
+        result_c = apple_ai_generate(sid, prompt_c, temp_c, tokens_c)
 
     if result_c == NULL:
         raise RuntimeError("Generation returned NULL")
@@ -378,15 +402,17 @@ def generate(
 # ============================================================================
 
 def generate_structured(
+    session_id: int,
     prompt: str,
     schema: Dict[str, Any],
     temperature: float = 1.0,
     max_tokens: int = 1024
 ) -> Dict[str, Any]:
     """
-    Generate structured JSON output matching a schema.
+    Generate structured JSON output matching a schema, on a specific session.
 
     Args:
+        session_id: The session ID returned by create_session()
         prompt: Input text prompt
         schema: JSON schema the output must conform to
         temperature: Sampling temperature (0.0-2.0)
@@ -399,7 +425,9 @@ def generate_structured(
         GenerationError: If generation fails
         InvalidParametersError: If parameters are invalid
         JSONParseError: If schema or response is invalid JSON
+        SessionNotFoundError: If session_id does not identify a live session
     """
+    cdef int32_t sid = session_id
     cdef bytes prompt_bytes = _encode_string(prompt)
     cdef const char *prompt_c = prompt_bytes
 
@@ -414,7 +442,7 @@ def generate_structured(
     cdef int32_t tokens_c = max_tokens
 
     with nogil:
-        result_c = apple_ai_generate_structured(prompt_c, schema_c, temp_c, tokens_c)
+        result_c = apple_ai_generate_structured(sid, prompt_c, schema_c, temp_c, tokens_c)
 
     if result_c == NULL:
         raise RuntimeError("Structured generation returned NULL")
@@ -442,45 +470,51 @@ def generate_structured(
 # Streaming generation
 # ============================================================================
 
-# Global callback storage for streaming
-cdef object _current_stream_callback = None
+# Callback storage for streaming, keyed by session_id so two sessions can
+# stream concurrently (e.g. on separate background threads) without
+# clobbering each other's callback.
+cdef object _stream_callbacks = {}
 
 
-cdef void _stream_callback_wrapper(const char *chunk) noexcept with gil:
+cdef void _stream_callback_wrapper(int32_t session_id, const char *chunk) noexcept with gil:
     """
-    C callback wrapper that calls Python callback.
+    C callback wrapper that calls the Python callback for `session_id`.
 
     This is called from Swift/C code during streaming generation.
     """
-    global _current_stream_callback
+    global _stream_callbacks
+
+    callback = _stream_callbacks.get(session_id)
+    if callback is None:
+        return
 
     if chunk == NULL:
         # End of stream signal
-        if _current_stream_callback:
-            try:
-                _current_stream_callback(None)
-            except:
-                pass  # Ignore exceptions in callback at end of stream
+        try:
+            callback(None)
+        except:
+            pass  # Ignore exceptions in callback at end of stream
         return
 
-    if _current_stream_callback:
-        try:
-            chunk_str = chunk.decode('utf-8')
-            _current_stream_callback(chunk_str)
-        except Exception as e:
-            print(f"Error in stream callback: {e}")
+    try:
+        chunk_str = chunk.decode('utf-8')
+        callback(chunk_str)
+    except Exception as e:
+        print(f"Error in stream callback: {e}")
 
 
 def generate_stream(
+    session_id: int,
     prompt: str,
     callback: Callable[[Optional[str]], None],
     temperature: float = 1.0,
     max_tokens: int = 1024
 ) -> None:
     """
-    Generate text response with streaming chunks.
+    Generate text response with streaming chunks, on a specific session.
 
     Args:
+        session_id: The session ID returned by create_session()
         prompt: Input text prompt
         callback: Function called with each text chunk (None signals end)
         temperature: Sampling temperature (0.0-2.0)
@@ -489,21 +523,23 @@ def generate_stream(
     Raises:
         GenerationError: If generation fails
         InvalidParametersError: If parameters are invalid
+        SessionNotFoundError: If session_id does not identify a live session
     """
-    global _current_stream_callback
+    global _stream_callbacks
 
+    cdef int32_t sid = session_id
     cdef bytes prompt_bytes = _encode_string(prompt)
     cdef const char *prompt_c = prompt_bytes
     cdef int32_t result
     cdef double temp_c = temperature
     cdef int32_t tokens_c = max_tokens
 
-    # Store callback globally for single-threaded use
-    _current_stream_callback = callback
+    _stream_callbacks[session_id] = callback
 
     try:
         with nogil:
             result = apple_ai_generate_stream(
+                sid,
                 prompt_c,
                 temp_c,
                 tokens_c,
@@ -511,24 +547,28 @@ def generate_stream(
             )
         _check_result(result)
     finally:
-        _current_stream_callback = None
+        _stream_callbacks.pop(session_id, None)
 
 
 # ============================================================================
 # History management
 # ============================================================================
 
-def get_history() -> list:
+def get_history(session_id: int) -> list:
     """
     Get conversation history.
+
+    Args:
+        session_id: The session ID returned by create_session()
 
     Returns:
         List of message dictionaries with 'role' and 'content' keys
     """
+    cdef int32_t sid = session_id
     cdef char *history_json
 
     with nogil:
-        history_json = apple_ai_get_history()
+        history_json = apple_ai_get_history(sid)
 
     if history_json == NULL:
         return []
@@ -540,8 +580,14 @@ def get_history() -> list:
         apple_ai_free_string(history_json)
 
 
-def clear_history() -> None:
-    """Clear conversation history."""
+def clear_history(session_id: int) -> None:
+    """
+    Clear a session's conversation history, keeping its instructions/tools.
+
+    Args:
+        session_id: The session ID returned by create_session()
+    """
+    cdef int32_t sid = session_id
     with nogil:
-        apple_ai_clear_history()
+        apple_ai_clear_history(sid)
 

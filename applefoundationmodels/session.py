@@ -196,6 +196,7 @@ class Session(BaseSession):
         with self._generation_context() as start_length:
             text = self._call_ffi(
                 self._ffi.generate,
+                self._session_id,
                 prompt,
                 temperature,
                 max_tokens,
@@ -214,6 +215,7 @@ class Session(BaseSession):
             json_schema = normalize_schema(schema)
             result = self._call_ffi(
                 self._ffi.generate_structured,
+                self._session_id,
                 prompt,
                 json_schema,
                 temperature,
@@ -248,7 +250,7 @@ class Session(BaseSession):
             ...     print(f"{msg['role']}: {msg['content']}")
         """
         self._check_closed()
-        result = self._call_ffi(self._ffi.get_history)
+        result = self._call_ffi(self._ffi.get_history, self._session_id)
         return cast(List[Dict[str, Any]], result)
 
     def clear_history(self) -> None:
@@ -258,7 +260,7 @@ class Session(BaseSession):
         Removes all messages from the session while keeping the session active.
         """
         self._check_closed()
-        self._call_ffi(self._ffi.clear_history)
+        self._call_ffi(self._ffi.clear_history, self._session_id)
         # Reset to current transcript length (may include persistent instructions)
         self._last_transcript_length = len(self.transcript)
 

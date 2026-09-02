@@ -34,11 +34,14 @@ cdef extern from "../applefoundationmodels/swift/foundation_models.h":
         AI_MODEL_NOT_READY = -3
         AI_AVAILABILITY_UNKNOWN = -99
 
-    # Callback type for streaming
-    ctypedef void (*ai_stream_callback_t)(const char *chunk)
+    # Callback type for streaming. session_id identifies which session this
+    # chunk belongs to.
+    ctypedef void (*ai_stream_callback_t)(int32_t session_id, const char *chunk)
 
-    # Callback type for tool execution
-    ctypedef int32_t (*ai_tool_callback_t)(const char *tool_name,
+    # Callback type for tool execution. session_id identifies which
+    # session's tool catalog tool_name should be resolved against.
+    ctypedef int32_t (*ai_tool_callback_t)(int32_t session_id,
+                                           const char *tool_name,
                                            const char *arguments_json,
                                            char *result_buffer,
                                            int32_t buffer_size)
@@ -52,34 +55,39 @@ cdef extern from "../applefoundationmodels/swift/foundation_models.h":
     int32_t apple_ai_check_availability() nogil
     char *apple_ai_get_availability_reason() nogil
 
-    # Session management
-    int32_t apple_ai_create_session(const char *instructions_json) nogil
-
-    # Tool calling
-    int32_t apple_ai_register_tools(const char *tools_json,
+    # Session management. Returns a positive session_id on success, or a
+    # negative AIResult error code. tools_json (may be NULL) is a JSON array
+    # of tool definitions bound to this session only.
+    int32_t apple_ai_create_session(const char *instructions_json,
+                                    const char *tools_json,
                                     ai_tool_callback_t callback) nogil
-    char *apple_ai_get_transcript() nogil
+    int32_t apple_ai_close_session(int32_t session_id) nogil
+
+    char *apple_ai_get_transcript(int32_t session_id) nogil
 
     # Text generation
-    char *apple_ai_generate(const char *prompt,
+    char *apple_ai_generate(int32_t session_id,
+                           const char *prompt,
                            double temperature,
                            int32_t max_tokens) nogil
 
     # Streaming generation
-    int32_t apple_ai_generate_stream(const char *prompt,
+    int32_t apple_ai_generate_stream(int32_t session_id,
+                                    const char *prompt,
                                     double temperature,
                                     int32_t max_tokens,
                                     ai_stream_callback_t callback) nogil
 
     # Structured generation
-    char *apple_ai_generate_structured(const char *prompt,
+    char *apple_ai_generate_structured(int32_t session_id,
+                                       const char *prompt,
                                        const char *schema_json,
                                        double temperature,
                                        int32_t max_tokens) nogil
 
     # History management
-    char *apple_ai_get_history() nogil
-    void apple_ai_clear_history() nogil
+    char *apple_ai_get_history(int32_t session_id) nogil
+    void apple_ai_clear_history(int32_t session_id) nogil
 
     # Statistics (stub for compatibility)
     char *apple_ai_get_stats() nogil
