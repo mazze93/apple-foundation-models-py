@@ -8,9 +8,10 @@ conversation/instructions/tool-set under the hood. These tests pin down
 that each session is now genuinely independent end to end.
 """
 
+import asyncio
 import threading
 
-from applefoundationmodels import Session
+from applefoundationmodels import AsyncSession, Session
 from applefoundationmodels.exceptions import ConcurrentRequestsError
 
 
@@ -219,3 +220,47 @@ class TestConcurrentStreamingOnSameSession:
             ), f"expected ConcurrentRequestsError, got {rejected_error!r}"
         finally:
             session.close()
+
+    async def test_concurrent_async_stream_on_same_session_does_not_hang(
+        self, check_availability
+    ):
+        """AsyncSession variant: two concurrent generate(stream=True) calls
+        via asyncio.gather on the same session must not hang either."""
+        session = AsyncSession(instructions=None)
+        results = {}
+        errors = {}
+
+        async def worker(name, prompt):
+            try:
+                chunks = []
+                async for chunk in session.generate(
+                    prompt, stream=True, temperature=0.3
+                ):
+                    chunks.append(chunk.content)
+                results[name] = "".join(chunks)
+            except Exception as e:
+                errors[name] = e
+
+        try:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        worker("first", "Count from 1 to 5."),
+                        worker("second", "Say the alphabet A to E."),
+                    ),
+                    timeout=20,
+                )
+            except asyncio.TimeoutError:
+                assert False, (
+                    "concurrent same-session async streaming hung instead of "
+                    "one call completing and the other raising"
+                )
+
+            assert len(results) == 1, f"expected exactly one success, got {results}"
+            assert len(errors) == 1, f"expected exactly one rejection, got {errors}"
+            (rejected_error,) = errors.values()
+            assert isinstance(
+                rejected_error, ConcurrentRequestsError
+            ), f"expected ConcurrentRequestsError, got {rejected_error!r}"
+        finally:
+            await session.aclose()
