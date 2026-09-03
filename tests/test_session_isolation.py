@@ -8,7 +8,10 @@ conversation/instructions/tool-set under the hood. These tests pin down
 that each session is now genuinely independent end to end.
 """
 
+import threading
+
 from applefoundationmodels import Session
+from applefoundationmodels.exceptions import ConcurrentRequestsError
 
 
 class TestSessionIdentity:
@@ -156,3 +159,63 @@ class TestSessionCloseIsolation:
             assert isinstance(response.text, str)
         finally:
             s2.close()
+
+
+class TestConcurrentStreamingOnSameSession:
+    """
+    Regression tests for a same-session concurrent-streaming deadlock found
+    while verifying the isolation fix above.
+
+    A second generate(stream=True) call started on a session that is
+    already streaming used to hang the process indefinitely rather than
+    raising - caused by two compounding bugs: (1) the native session had no
+    guard against a second concurrent request reaching the model at all,
+    and (2) even once rejected, the rejected call's Cython-level callback
+    registration still clobbered the active call's registration in a dict
+    keyed only by session_id, silently discarding every subsequent chunk
+    the active call's consumer was waiting on. Both are fixed; this locks
+    the fix in.
+    """
+
+    def test_concurrent_stream_on_same_session_does_not_hang(self, check_availability):
+        """The first stream must complete normally; the second must raise
+        ConcurrentRequestsError - and, above all, neither may hang."""
+        session = Session(instructions=None)
+        results = {}
+        errors = {}
+
+        def worker(name, prompt):
+            try:
+                chunks = [
+                    c.content
+                    for c in session.generate(prompt, stream=True, temperature=0.3)
+                ]
+                results[name] = "".join(chunks)
+            except Exception as e:
+                errors[name] = e
+
+        t1 = threading.Thread(target=worker, args=("first", "Count from 1 to 5."))
+        t2 = threading.Thread(
+            target=worker, args=("second", "Say the alphabet A to E.")
+        )
+        try:
+            t1.start()
+            t2.start()
+            t1.join(timeout=20)
+            t2.join(timeout=20)
+
+            assert not t1.is_alive() and not t2.is_alive(), (
+                "concurrent same-session streaming hung instead of one call "
+                "completing and the other raising"
+            )
+            # Exactly one of the two must have succeeded and the other must
+            # have been rejected - which one wins the race is inherently
+            # nondeterministic, so assert the shape, not a specific winner.
+            assert len(results) == 1, f"expected exactly one success, got {results}"
+            assert len(errors) == 1, f"expected exactly one rejection, got {errors}"
+            (rejected_error,) = errors.values()
+            assert isinstance(
+                rejected_error, ConcurrentRequestsError
+            ), f"expected ConcurrentRequestsError, got {rejected_error!r}"
+        finally:
+            session.close()

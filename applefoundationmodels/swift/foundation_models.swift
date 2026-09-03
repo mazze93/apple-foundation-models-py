@@ -24,6 +24,14 @@ private struct SessionEntry {
     var session: LanguageModelSession
     var instructions: String?
     var tools: [any Tool]
+    /// True while a generate/generate_stream/generate_structured call is
+    /// in flight on this session. Apple's `LanguageModelSession` itself
+    /// guards a *second* concurrent `respond()` cleanly (raises
+    /// `concurrentRequests`), but a second concurrent `streamResponse()`
+    /// was found to hang the process instead of erroring - rejecting the
+    /// second call before it ever reaches the session avoids that
+    /// regardless of which call kind race occurs.
+    var busy: Bool = false
 }
 
 /// Registry of every live session, keyed by the id handed back from
@@ -51,6 +59,36 @@ private func getSessionEntry(_ sessionID: Int32) -> SessionEntry? {
     sessionRegistryLock.lock()
     defer { sessionRegistryLock.unlock() }
     return sessionRegistry[sessionID]
+}
+
+/// Atomically check-and-set a session's `busy` flag before starting a
+/// generate/generate_stream/generate_structured call, so two concurrent
+/// calls on the *same* session id can never both proceed. Pair with
+/// `endRequest(_:)` (typically via `defer`) once the call completes,
+/// success or failure.
+@available(macOS 26.0, *)
+private func beginRequest(_ sessionID: Int32) -> Result<LanguageModelSession, AIResult> {
+    sessionRegistryLock.lock()
+    defer { sessionRegistryLock.unlock() }
+    guard var entry = sessionRegistry[sessionID] else {
+        return .failure(.errorSessionNotFound)
+    }
+    if entry.busy {
+        return .failure(.errorConcurrentRequests)
+    }
+    entry.busy = true
+    sessionRegistry[sessionID] = entry
+    return .success(entry.session)
+}
+
+@available(macOS 26.0, *)
+private func endRequest(_ sessionID: Int32) {
+    sessionRegistryLock.lock()
+    defer { sessionRegistryLock.unlock() }
+    if var entry = sessionRegistry[sessionID] {
+        entry.busy = false
+        sessionRegistry[sessionID] = entry
+    }
 }
 
 @available(macOS 26.0, *)
@@ -532,6 +570,17 @@ public func appleAICloseSession(sessionID: Int32) -> Int32 {
 
 // MARK: - Generation
 
+/// Turn a `beginRequest` failure into the message for `createErrorResponse`.
+private func beginRequestErrorMessage(_ code: AIResult, sessionID: Int32) -> String {
+    switch code {
+    case .errorConcurrentRequests:
+        return "Session \(sessionID) is already responding to a previous prompt. " +
+            "Wait for it to finish before starting another generate() call on the same session."
+    default:
+        return "Session \(sessionID) not found"
+    }
+}
+
 /// Generate text response
 /// - Parameters:
 ///   - prompt: User prompt as C string
@@ -551,9 +600,13 @@ public func appleAIGenerate(
 
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
-        guard let entry = getSessionEntry(sessionID) else {
-            return createErrorResponse("Session \(sessionID) not found", errorCode: .errorSessionNotFound)
+        let requestResult = beginRequest(sessionID)
+        guard case .success(let session) = requestResult else {
+            guard case .failure(let code) = requestResult else { return createErrorResponse("Unknown error") }
+            return createErrorResponse(beginRequestErrorMessage(code, sessionID: sessionID), errorCode: code)
         }
+        defer { endRequest(sessionID) }
+
         let promptString = String(cString: prompt)
 
         // Use semaphore for async coordination
@@ -562,8 +615,6 @@ public func appleAIGenerate(
 
         Task {
             do {
-                let session = entry.session
-
                 // Configure generation options
                 let options = GenerationOptions(
                     temperature: temperature,
@@ -626,11 +677,22 @@ public func appleAIGenerateStream(
 
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
-        guard let entry = getSessionEntry(sessionID) else {
-            cb(sessionID, strdup("Session \(sessionID) not found"))
-            cb(sessionID, nil)
-            return AIResult.errorSessionNotFound.rawValue
+        let requestResult = beginRequest(sessionID)
+        guard case .success(let session) = requestResult else {
+            // Deliberately don't invoke the callback here: the Cython
+            // wrapper raises from this function's *return code* via
+            // _check_result(), and the caller only distinguishes "stream
+            // ended cleanly" (a nil chunk) from "stream errored" by whether
+            // an exception ever reaches it - sending a nil chunk first
+            // would make the generator stop before that exception surfaces,
+            // turning a real error into a silently-truncated success.
+            if case .failure(let code) = requestResult {
+                return code.rawValue
+            }
+            return AIResult.errorUnknown.rawValue
         }
+        defer { endRequest(sessionID) }
+
         let promptString = String(cString: prompt)
 
         let semaphore = DispatchSemaphore(value: 0)
@@ -638,8 +700,6 @@ public func appleAIGenerateStream(
 
         Task {
             do {
-                let session = entry.session
-
                 // Configure generation options
                 let options = GenerationOptions(
                     temperature: temperature,
@@ -1010,9 +1070,13 @@ public func appleAIGenerateStructured(
 
     #if canImport(FoundationModels)
     if #available(macOS 26.0, *) {
-        guard let entry = getSessionEntry(sessionID) else {
-            return createErrorResponse("Session \(sessionID) not found", errorCode: .errorSessionNotFound)
+        let requestResult = beginRequest(sessionID)
+        guard case .success(let session) = requestResult else {
+            guard case .failure(let code) = requestResult else { return createErrorResponse("Unknown error") }
+            return createErrorResponse(beginRequestErrorMessage(code, sessionID: sessionID), errorCode: code)
         }
+        defer { endRequest(sessionID) }
+
         let promptString = String(cString: prompt)
         let schemaString = String(cString: schemaJson)
 
@@ -1037,8 +1101,6 @@ public func appleAIGenerateStructured(
 
         Task {
             do {
-                let session = entry.session
-
                 // Configure generation options
                 let options = GenerationOptions(
                     temperature: temperature,

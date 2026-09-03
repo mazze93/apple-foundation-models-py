@@ -9,6 +9,7 @@ C API, handling memory management, error conversion, and callback marshalling.
 """
 
 import json
+import threading
 from typing import Optional, Callable, Any, Dict
 from .exceptions import raise_for_error_code
 from .types import Result, Availability
@@ -472,8 +473,11 @@ def generate_structured(
 
 # Callback storage for streaming, keyed by session_id so two sessions can
 # stream concurrently (e.g. on separate background threads) without
-# clobbering each other's callback.
+# clobbering each other's callback. _stream_callbacks_lock makes the
+# "only register if nothing is registered for this session_id yet" check
+# in generate_stream() atomic - see the comment there for why that matters.
 cdef object _stream_callbacks = {}
+cdef object _stream_callbacks_lock = threading.Lock()
 
 
 cdef void _stream_callback_wrapper(int32_t session_id, const char *chunk) noexcept with gil:
@@ -534,7 +538,24 @@ def generate_stream(
     cdef double temp_c = temperature
     cdef int32_t tokens_c = max_tokens
 
-    _stream_callbacks[session_id] = callback
+    # Only register if no stream is already registered for this session_id.
+    # Swift's own per-session busy flag (apple_ai_generate_stream rejects a
+    # second concurrent call with errorConcurrentRequests before ever
+    # touching the model) is the real serialization point, but a rejected
+    # call still runs this wrapper - if it unconditionally overwrote the
+    # dict entry, and then unconditionally popped it in `finally`, it would
+    # rip the *active* call's callback out from under it mid-stream: every
+    # subsequent chunk for the active call would silently find no callback
+    # registered and be dropped, and its consumer would block forever
+    # waiting for a chunk (or an end-of-stream signal) that will never
+    # arrive. Guard both the write and the pop so a call that never became
+    # "the" registered stream can't disturb the one that did. The lock
+    # makes the check-then-set atomic - without it, two threads could both
+    # observe "nothing registered" before either writes.
+    with _stream_callbacks_lock:
+        registered_here = session_id not in _stream_callbacks
+        if registered_here:
+            _stream_callbacks[session_id] = callback
 
     try:
         with nogil:
@@ -547,7 +568,10 @@ def generate_stream(
             )
         _check_result(result)
     finally:
-        _stream_callbacks.pop(session_id, None)
+        if registered_here:
+            with _stream_callbacks_lock:
+                if _stream_callbacks.get(session_id) is callback:
+                    _stream_callbacks.pop(session_id, None)
 
 
 # ============================================================================
