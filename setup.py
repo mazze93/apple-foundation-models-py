@@ -1,14 +1,15 @@
 """Setup script for apple-foundation-models-py Python bindings."""
 
-import sys
+import json
 import os
 import platform
-import subprocess
 import shutil
-import json
+import subprocess
+import sys
 import warnings
 from pathlib import Path
-from setuptools import setup, Extension, find_packages
+
+from setuptools import Extension, find_packages, setup
 from setuptools.command.build_ext import build_ext as _build_ext
 from setuptools.command.build_py import build_py as _build_py
 
@@ -55,8 +56,7 @@ def generate_swift_error_code_file():
         # e.g., InitializationError → errorInitialization
         if not swift_case:
             name = entry["name"]
-            if name.endswith("Error"):
-                name = name[:-5]  # Remove "Error" suffix
+            name = name.removesuffix("Error")  # Remove "Error" suffix
             swift_case = "error" + name
 
         entries.append((swift_case, int(entry["code"])))
