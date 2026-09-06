@@ -9,8 +9,10 @@ Demonstrates:
 """
 
 import asyncio
-from applefoundationmodels import AsyncSession
+
 from utils import check_availability_or_exit
+
+from applefoundationmodels import AsyncSession
 
 
 async def stream_question(session, question: str):

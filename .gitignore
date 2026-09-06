@@ -70,3 +70,6 @@ libai/_libai.cpp
 
 # Build artifacts (temporary build files)
 *.o
+
+# Editor
+.zed/
