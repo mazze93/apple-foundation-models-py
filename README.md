@@ -38,7 +38,7 @@ pip install apple-foundation-models[pydantic]
 
 ```bash
 # Clone the repository
-git clone https://github.com/btucker/apple-foundation-models-py.git
+git clone https://github.com/mazze93/apple-foundation-models-py.git
 cd apple-foundation-models-py
 
 # Install (automatically builds Swift dylib and Cython extension)
@@ -47,11 +47,46 @@ pip install -e .
 
 **Requirements:**
 
-- macOS 26.0+ (Sequoia) with Apple Intelligence enabled
+- macOS 26.0+ (Tahoe) with Apple Intelligence enabled
 - Xcode command line tools (`xcode-select --install`)
 - Python 3.9 or higher
 
 **Note:** The Swift dylib is built automatically during installation.
+
+## Command line: `afm`
+
+The package ships an `afm` command for using the on-device model from the shell.
+Install it once so it's on your `PATH` everywhere (editable, so it tracks this checkout):
+
+```bash
+uv tool install --editable .     # from the repo root; `uv tool upgrade` not needed after edits
+afm status                       # availability, context window, token counting support
+```
+
+```bash
+afm "Explain TCP slow start in two sentences."
+git diff | afm -s "You write concise commit messages." "Write one for this diff."
+afm --schema person.json "Alice is 28 and lives in Paris."   # prints JSON
+afm chat                                                     # history kept across turns
+cat long.txt | afm --truncate "Summarize."                   # cut input to fit the window
+```
+
+| Flag | Meaning |
+|---|---|
+| `-s, --system TEXT` | session instructions |
+| `-t, --temperature N` | 0.0–2.0 |
+| `-m, --max-tokens N` | response budget (also reserved out of the context window) |
+| `--schema FILE` | JSON Schema file → structured JSON output |
+| `--truncate` | keep the head of piped input that fits, warn on stderr |
+| `--no-stream` | print the whole response at once |
+
+Piped input is appended to the prompt words (or is the prompt, if none are given).
+Before generating, `afm` counts tokens (macOS 26.4+) and fails fast with exit code 2
+if the input can't fit, instead of sending it. In `afm chat`, a full window clears the
+history and retries the turn once; `/reset` and `/exit` are built in. `status` and
+`chat` are only commands as the first argument — `afm -- status` sends the word as a prompt.
+
+Exit codes: `0` ok · `1` unavailable / generation error · `2` usage error or input too large · `130` interrupted.
 
 ## Quick Start
 

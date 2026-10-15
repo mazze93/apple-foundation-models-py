@@ -51,7 +51,12 @@ Async streaming:
     asyncio.run(main())
 """
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import PackageNotFoundError, version
+
+    __version__ = version("apple-foundation-models")
+except PackageNotFoundError:  # running from a source tree without install
+    __version__ = "0.0.0+unknown"
 
 
 def apple_intelligence_available() -> bool:

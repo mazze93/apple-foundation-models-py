@@ -24,6 +24,8 @@ uv sync --extra dev        # install dev deps (pytest, mypy, ruff, pre-commit) +
 uv sync --extra dev --reinstall-package apple-foundation-models
 ```
 
+**`afm` CLI** (`applefoundationmodels/cli.py`, entry point in `[project.scripts]`) is installed machine-wide with `uv tool install --editable .`. The tool env imports from this source tree and shares its compiled `.so`/`.dylib` (both envs are Python 3.13), so Python edits and `--reinstall-package` rebuilds go live in `afm` immediately; if the two Python versions ever diverge, rerun `uv tool install --editable --reinstall .`. Its context pre-flight reserves `--max-tokens` plus `FRAMEWORK_OVERHEAD_TOKENS` (128): the framework uses ~70–85 tokens that `token_count` doesn't report — measured, not guessed; re-measure if a new OS changes it.
+
 `uv build --wheel` builds a wheel; wheels are architecture/version-specific (arm64 only — see `setup.py`'s `ARCH = "arm64"`; x86_64 Macs are not supported).
 
 **Python floor is 3.9** (`requires-python`, CI matrix 3.9–3.14) while the local venv is newer, so nothing local catches 3.10+ syntax: no `X | Y` annotations or `match` in runtime code — use `Optional`/`Union`. (This is also why ruff's `UP` rules are off.)
