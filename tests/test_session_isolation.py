@@ -75,8 +75,7 @@ class TestSessionHistoryIsolation:
 
             s2.generate("What is 5 + 7?", temperature=0.1)
             assert len(s1.transcript) == s1_len_after_one, (
-                "Session A's transcript should be untouched by session B's "
-                "generation"
+                "Session A's transcript should be untouched by session B's generation"
             )
             assert len(s2.transcript) > 0
         finally:
@@ -96,9 +95,9 @@ class TestSessionHistoryIsolation:
             s1.clear_history()
 
             assert len(s1.transcript) == 0
-            assert (
-                len(s2.transcript) > 0
-            ), "Clearing session A's history should not clear session B's"
+            assert len(s2.transcript) > 0, (
+                "Clearing session A's history should not clear session B's"
+            )
         finally:
             s1.close()
             s2.close()
@@ -215,9 +214,9 @@ class TestConcurrentStreamingOnSameSession:
             assert len(results) == 1, f"expected exactly one success, got {results}"
             assert len(errors) == 1, f"expected exactly one rejection, got {errors}"
             (rejected_error,) = errors.values()
-            assert isinstance(
-                rejected_error, ConcurrentRequestsError
-            ), f"expected ConcurrentRequestsError, got {rejected_error!r}"
+            assert isinstance(rejected_error, ConcurrentRequestsError), (
+                f"expected ConcurrentRequestsError, got {rejected_error!r}"
+            )
         finally:
             session.close()
 
@@ -251,16 +250,16 @@ class TestConcurrentStreamingOnSameSession:
                     timeout=20,
                 )
             except asyncio.TimeoutError:
-                assert False, (
+                raise AssertionError(
                     "concurrent same-session async streaming hung instead of "
                     "one call completing and the other raising"
-                )
+                ) from None
 
             assert len(results) == 1, f"expected exactly one success, got {results}"
             assert len(errors) == 1, f"expected exactly one rejection, got {errors}"
             (rejected_error,) = errors.values()
-            assert isinstance(
-                rejected_error, ConcurrentRequestsError
-            ), f"expected ConcurrentRequestsError, got {rejected_error!r}"
+            assert isinstance(rejected_error, ConcurrentRequestsError), (
+                f"expected ConcurrentRequestsError, got {rejected_error!r}"
+            )
         finally:
             await session.aclose()

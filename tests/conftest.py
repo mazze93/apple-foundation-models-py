@@ -3,6 +3,7 @@ Pytest configuration for apple-foundation-models-py tests
 """
 
 import pytest
+
 import applefoundationmodels
 
 
@@ -61,9 +62,9 @@ def assert_valid_response(response, min_length=0, message="Response validation f
             f"{message}: should be GenerationResponse or string, got {type(response)}"
         )
 
-    assert (
-        len(text) > min_length
-    ), f"{message}: should have content (got {len(text)} chars)"
+    assert len(text) > min_length, (
+        f"{message}: should have content (got {len(text)} chars)"
+    )
     return text
 
 

@@ -7,15 +7,16 @@ and managing tool registrations.
 
 import inspect
 from typing import (
+    Any,
     Callable,
     Dict,
-    Any,
     Optional,
-    get_type_hints,
-    get_origin,
-    get_args,
     Union,
+    get_args,
+    get_origin,
+    get_type_hints,
 )
+
 from .exceptions import ToolCallError
 
 # Type mapping for efficient schema generation

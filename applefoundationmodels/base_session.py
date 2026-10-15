@@ -5,38 +5,38 @@ Provides shared logic for both sync and async sessions.
 """
 
 import asyncio
+import logging
 import platform
 import threading
-import logging
 from abc import ABC, abstractmethod
-from contextlib import contextmanager, asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import (
-    Optional,
-    Dict,
     Any,
-    Callable,
-    List,
-    Union,
-    cast,
-    Generator,
     AsyncGenerator,
     Awaitable,
+    Callable,
     ClassVar,
+    Dict,
+    Generator,
+    List,
     Literal,
+    Optional,
+    Union,
+    cast,
 )
 
 from .base import ContextManagedResource
+from .constants import DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE
+from .exceptions import NotAvailableError
 from .types import (
+    Availability,
+    Function,
     GenerationResponse,
     StreamChunk,
     ToolCall,
-    Function,
-    Availability,
 )
-from .constants import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
-from .exceptions import NotAvailableError
 
 logger = logging.getLogger(__name__)
 

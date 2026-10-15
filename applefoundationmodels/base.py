@@ -4,7 +4,6 @@ Base classes for applefoundationmodels.
 Provides base functionality for context-managed resources.
 """
 
-import asyncio
 from abc import ABC, abstractmethod
 from typing import TypeVar
 

@@ -3,10 +3,8 @@ Unit tests for applefoundationmodels.Session
 """
 
 import pytest
-import asyncio
-import applefoundationmodels
+
 from applefoundationmodels import Session
-from conftest import assert_valid_response, assert_valid_chunks
 
 
 class TestSessionGeneration:
@@ -16,9 +14,9 @@ class TestSessionGeneration:
         """Test basic text generation."""
         response = session.generate("What is 2 + 2?", temperature=0.3)
         assert isinstance(response.text, str), "Response should have text property"
-        assert (
-            "4" in response.text or "four" in response.text.lower()
-        ), "Response should contain the answer to 2+2"
+        assert "4" in response.text or "four" in response.text.lower(), (
+            "Response should contain the answer to 2+2"
+        )
 
     def test_generate_with_temperature(self, session, check_availability):
         """Test generation with different temperatures."""
@@ -42,9 +40,9 @@ class TestSessionGeneration:
         response_short = session.generate(
             "Write a long story about space exploration", max_tokens=20, temperature=0.5
         )
-        assert isinstance(
-            response_short.text, str
-        ), "Response should have text property"
+        assert isinstance(response_short.text, str), (
+            "Response should have text property"
+        )
 
         # Generate with higher token limit on same prompt
         response_long = session.generate(
@@ -222,12 +220,12 @@ class TestTranscriptTracking:
 
         # Last entries of full transcript should match last_generation_transcript
         full_transcript = session.transcript
-        assert len(full_transcript) >= len(
-            last_transcript
-        ), "Full transcript should be at least as long as last_generation_transcript"
-        assert (
-            full_transcript[-len(last_transcript) :] == last_transcript
-        ), "Last entries of full transcript should match last_generation_transcript"
+        assert len(full_transcript) >= len(last_transcript), (
+            "Full transcript should be at least as long as last_generation_transcript"
+        )
+        assert full_transcript[-len(last_transcript) :] == last_transcript, (
+            "Last entries of full transcript should match last_generation_transcript"
+        )
 
     def test_last_generation_transcript_multiple_generations(
         self, session, check_availability
@@ -252,19 +250,19 @@ class TestTranscriptTracking:
         full_transcript_len = len(full_transcript)
 
         # Verify last_generation_transcript only contains entries from second call
-        assert (
-            last_transcript2_len < full_transcript_len
-        ), "last_generation_transcript should be shorter than full transcript"
+        assert last_transcript2_len < full_transcript_len, (
+            "last_generation_transcript should be shorter than full transcript"
+        )
 
         # Verify full transcript contains both generations
-        assert full_transcript_len >= (
-            last_transcript1_len + last_transcript2_len
-        ), "Full transcript should contain entries from both generations"
+        assert full_transcript_len >= (last_transcript1_len + last_transcript2_len), (
+            "Full transcript should contain entries from both generations"
+        )
 
         # Verify last entries in full transcript match last_generation_transcript
-        assert (
-            full_transcript[-last_transcript2_len:] == last_transcript2
-        ), "Last entries of full transcript should match last_generation_transcript"
+        assert full_transcript[-last_transcript2_len:] == last_transcript2, (
+            "Last entries of full transcript should match last_generation_transcript"
+        )
 
     def test_last_generation_transcript_with_structured_output(self, session):
         """Test last_generation_transcript with structured output."""
@@ -288,15 +286,15 @@ class TestTranscriptTracking:
 
         # Get last generation transcript
         last_transcript = session.last_generation_transcript
-        assert (
-            len(last_transcript) > 0
-        ), "Should have entries after structured generation"
+        assert len(last_transcript) > 0, (
+            "Should have entries after structured generation"
+        )
 
         # Full transcript should have more entries than last_generation_transcript
         full_transcript = session.transcript
-        assert len(full_transcript) > len(
-            last_transcript
-        ), "Full transcript should include previous generation"
+        assert len(full_transcript) > len(last_transcript), (
+            "Full transcript should include previous generation"
+        )
 
     def test_last_generation_transcript_with_streaming(
         self, session, check_availability
@@ -314,15 +312,15 @@ class TestTranscriptTracking:
 
         # Get last generation transcript
         last_transcript = session.last_generation_transcript
-        assert (
-            len(last_transcript) > 0
-        ), "Should have entries after streaming generation"
+        assert len(last_transcript) > 0, (
+            "Should have entries after streaming generation"
+        )
 
         # Verify full transcript includes both generations
         full_transcript = session.transcript
-        assert len(full_transcript) > len(
-            last_transcript
-        ), "Full transcript should include both regular and streaming generations"
+        assert len(full_transcript) > len(last_transcript), (
+            "Full transcript should include both regular and streaming generations"
+        )
 
     def test_last_generation_transcript_after_clear_history(
         self, session, check_availability
@@ -349,12 +347,12 @@ class TestTranscriptTracking:
 
         # Last entries of full transcript should match last_generation_transcript
         full_transcript = session.transcript
-        assert len(full_transcript) >= len(
-            last_transcript2
-        ), "Full transcript should be at least as long as last_generation_transcript"
-        assert (
-            full_transcript[-len(last_transcript2) :] == last_transcript2
-        ), "Last entries of full transcript should match last_generation_transcript"
+        assert len(full_transcript) >= len(last_transcript2), (
+            "Full transcript should be at least as long as last_generation_transcript"
+        )
+        assert full_transcript[-len(last_transcript2) :] == last_transcript2, (
+            "Last entries of full transcript should match last_generation_transcript"
+        )
 
     def test_last_generation_transcript_entry_format(self, session, check_availability):
         """Test that last_generation_transcript entries have expected format."""
@@ -446,31 +444,31 @@ class TestTranscriptTracking:
         entry_types2 = {entry["type"] for entry in last_transcript2}
         assert "prompt" in entry_types2, "Should contain prompt from second call"
         assert "tool_call" in entry_types2, "Should contain tool_call from second call"
-        assert (
-            "tool_output" in entry_types2
-        ), "Should contain tool_output from second call"
+        assert "tool_output" in entry_types2, (
+            "Should contain tool_output from second call"
+        )
 
         # Verify full transcript contains both generations
         full_transcript = session.transcript
         full_tool_calls = [e for e in full_transcript if e["type"] == "tool_call"]
-        assert (
-            len(full_tool_calls) >= 2
-        ), "Full transcript should have tool calls from both generations"
+        assert len(full_tool_calls) >= 2, (
+            "Full transcript should have tool calls from both generations"
+        )
 
         last_tool_calls = [e for e in last_transcript2 if e["type"] == "tool_call"]
-        assert len(last_tool_calls) < len(
-            full_tool_calls
-        ), "last_generation_transcript should have fewer tool calls than full transcript"
+        assert len(last_tool_calls) < len(full_tool_calls), (
+            "last_generation_transcript should have fewer tool calls than full transcript"
+        )
 
         # Verify last_generation_transcript doesn't include first generation's entries
         # by checking that its length is less than full transcript
-        assert len(last_transcript2) < len(
-            full_transcript
-        ), "last_generation_transcript should be shorter than full transcript after multiple generations"
+        assert len(last_transcript2) < len(full_transcript), (
+            "last_generation_transcript should be shorter than full transcript after multiple generations"
+        )
 
         # Verify the last entries in full transcript match last_generation_transcript
-        assert (
-            full_transcript[-len(last_transcript2) :] == last_transcript2
-        ), "Last entries of full transcript should match last_generation_transcript"
+        assert full_transcript[-len(last_transcript2) :] == last_transcript2, (
+            "Last entries of full transcript should match last_generation_transcript"
+        )
 
         session.close()

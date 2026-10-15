@@ -27,8 +27,8 @@ from applefoundationmodels.exceptions import (
     ERROR_CODE_TO_EXCEPTION,
     FoundationModelsError,
     GenerationError,
-    raise_for_error_code,
     get_error_definitions,
+    raise_for_error_code,
 )
 
 
@@ -62,24 +62,24 @@ class TestErrorCodeMapping:
     def test_all_error_codes_mapped(self):
         """Verify all error codes have corresponding exception classes."""
         for case in ERROR_CASES:
-            assert (
-                ERROR_CODE_TO_EXCEPTION[case.code] == case.exception
-            ), f"Error code {case.code} should map to {case.exception.__name__}"
+            assert ERROR_CODE_TO_EXCEPTION[case.code] == case.exception, (
+                f"Error code {case.code} should map to {case.exception.__name__}"
+            )
 
     def test_generation_errors_inherit_from_generation_error(self):
         """Verify all generation-related errors inherit from GenerationError."""
         for code in GENERATION_ERROR_CODES:
             exception_class = ERROR_CODE_TO_EXCEPTION[code]
-            assert issubclass(
-                exception_class, GenerationError
-            ), f"{exception_class.__name__} should inherit from GenerationError"
+            assert issubclass(exception_class, GenerationError), (
+                f"{exception_class.__name__} should inherit from GenerationError"
+            )
 
     def test_all_errors_inherit_from_base(self):
         """Verify all errors inherit from FoundationModelsError."""
         for exception_class in ERROR_CODE_TO_EXCEPTION.values():
-            assert issubclass(
-                exception_class, FoundationModelsError
-            ), f"{exception_class.__name__} should inherit from FoundationModelsError"
+            assert issubclass(exception_class, FoundationModelsError), (
+                f"{exception_class.__name__} should inherit from FoundationModelsError"
+            )
 
 
 class TestRaiseForErrorCode:

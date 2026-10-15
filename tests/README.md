@@ -127,4 +127,4 @@ Since most tests require Apple Intelligence on macOS 26.0+:
 - Cannot run on standard (non-macOS, non-Apple-Silicon) CI runners
 - `test_exceptions.py` is the exception — it doesn't call into the FFI, so it can run anywhere
 - `.github/workflows/test.yml` runs on `macos-26` runners (Apple Intelligence available) across the Python 3.9-3.14 matrix, builds a wheel with `uv build --wheel`, installs it into a clean venv, and runs the *entire* `tests/` directory unfiltered (unit + integration together) — there's no separate fast/slow split in CI today
-- A separate `lint` job runs `black --check` and `mypy` (mypy is `continue-on-error: true`, so it's advisory only)
+- A separate `lint` job runs `ruff check`, `ruff format --check`, and `mypy` (mypy is `continue-on-error: true`, so it's advisory only)

@@ -451,8 +451,9 @@ uv run pytest
 # Type checking
 uv run mypy applefoundationmodels
 
-# Format code
-uv run black applefoundationmodels examples
+# Lint and format code
+uv run ruff check --fix .
+uv run ruff format .
 
 # Build wheels
 uv build --wheel
@@ -464,7 +465,7 @@ You can also use pip if preferred:
 pip install -e ".[dev]"
 pytest
 mypy applefoundationmodels
-black applefoundationmodels examples
+ruff check --fix . && ruff format .
 ```
 
 ### Project Structure

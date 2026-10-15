@@ -59,7 +59,7 @@ def main():
             category: The category to get items from
             count: Number of items to return
         """
-        items = [f"Item {i+1}" for i in range(count)]
+        items = [f"Item {i + 1}" for i in range(count)]
         return f"Top {count} in {category}: {', '.join(items)}"
 
     # Example 5: Tool with optional parameters
@@ -97,7 +97,7 @@ def main():
             ("What is 42 times 13?", "calculate"),
         ]
 
-        for i, (query, expected_tool) in enumerate(test_queries, 1):
+        for i, (query, _expected_tool) in enumerate(test_queries, 1):
             print(f"\nTest {i}: {query}")
             print("-" * 70)
 

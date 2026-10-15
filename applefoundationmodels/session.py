@@ -4,32 +4,29 @@ Session API for applefoundationmodels Python bindings.
 Provides session management, text generation, and async streaming support.
 """
 
-import asyncio
-import json
 import logging
+from queue import Empty, Queue
 from typing import (
-    Optional,
-    Dict,
-    Any,
-    Callable,
-    Union,
     TYPE_CHECKING,
-    List,
-    cast,
+    Any,
+    Dict,
     Iterator,
-    overload,
+    List,
+    Optional,
     Type,
+    Union,
+    cast,
+    overload,
 )
+
 from typing_extensions import Literal
-from queue import Queue, Empty
-import threading
 
 from .base_session import BaseSession, StreamQueueItem
+from .pydantic_compat import normalize_schema
 from .types import (
     GenerationResponse,
     StreamChunk,
 )
-from .pydantic_compat import normalize_schema
 
 if TYPE_CHECKING:
     from pydantic import BaseModel

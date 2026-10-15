@@ -37,7 +37,7 @@ requires-python = ">=3.9"
 dependencies = ["typing-extensions>=4.0.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.20", "pytest-cov>=4.0", "black>=22.0", "mypy>=0.991"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.20", "pytest-cov>=4.0", "ruff>=0.17.1", "mypy>=0.991"]
 pydantic = ["pydantic>=2.0"]
 
 [project.urls]
@@ -79,6 +79,18 @@ markers = [
   "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
 ]
 asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py39"  # matches requires-python; keeps UP-style rewrites from emitting 3.10+ syntax
+line-length = 88
+extend-exclude = ["applefoundationmodels/swift", "*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = ["E501"]  # line length is the formatter's job
+
+[tool.ruff.lint.per-file-ignores]
+"applefoundationmodels/__init__.py" = ["E402", "F401", "F403"]  # public re-exports below a helper def
 
 [tool.mypy]
 python_version = "3.10"

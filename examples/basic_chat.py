@@ -9,8 +9,9 @@ Demonstrates:
 - Error handling
 """
 
-from applefoundationmodels import Session
 from utils import check_availability_or_exit
+
+from applefoundationmodels import Session
 
 
 def main():

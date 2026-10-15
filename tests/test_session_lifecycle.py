@@ -3,6 +3,7 @@ Unit tests for applefoundationmodels.Session static methods and lifecycle
 """
 
 import pytest
+
 import applefoundationmodels
 from applefoundationmodels import Availability
 

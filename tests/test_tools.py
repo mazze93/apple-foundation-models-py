@@ -5,9 +5,11 @@ These tests verify that tools can be registered and called by the model
 with various parameter signatures and types.
 """
 
-import pytest
-from typing import Callable, Dict, Any, Optional
 from functools import wraps
+from typing import Any, Callable, Dict, Optional
+
+import pytest
+
 from applefoundationmodels import Session
 
 
@@ -63,9 +65,9 @@ class ToolTestHarness:
         call = self.assert_called_once()
         for key, expected_value in expected_kwargs.items():
             assert key in call["kwargs"], f"Expected kwarg '{key}' not found"
-            assert (
-                call["kwargs"][key] == expected_value
-            ), f"Expected {key}={expected_value}, got {call['kwargs'][key]}"
+            assert call["kwargs"][key] == expected_value, (
+                f"Expected {key}={expected_value}, got {call['kwargs'][key]}"
+            )
         return call
 
     def get_call_kwargs(self) -> Dict[str, Any]:
@@ -146,7 +148,7 @@ class TestToolRegistration:
 
         def get_top_items(category: str, count: int) -> str:
             """Get top items in a category."""
-            items = [f"Item {i+1}" for i in range(count)]
+            items = [f"Item {i + 1}" for i in range(count)]
             return f"Top {count} in {category}: {', '.join(items)}"
 
         wrapped = harness.wrap_tool(get_top_items)
@@ -382,9 +384,9 @@ class TestTranscript:
         assert "prompt" in entry_types
         # Verify tool_call and tool_output entries are present
         assert "tool_call" in entry_types, "transcript should contain tool_call entries"
-        assert (
-            "tool_output" in entry_types
-        ), "transcript should contain tool_output entries"
+        assert "tool_output" in entry_types, (
+            "transcript should contain tool_output entries"
+        )
 
     def test_transcript_structure(self, check_availability):
         """Test that transcript entries have expected structure."""
@@ -454,9 +456,9 @@ class TestTranscript:
 
         # Validate content is not empty
         assert tool_output["content"], "tool_output content should not be empty"
-        assert (
-            "Result:" in tool_output["content"]
-        ), "tool_output should contain actual result"
+        assert "Result:" in tool_output["content"], (
+            "tool_output should contain actual result"
+        )
 
 
 @pytest.mark.skipif(not Session.is_ready(), reason="Apple Intelligence not available")
@@ -496,7 +498,7 @@ class TestToolIntegration:
 
         with Session(tools=[get_system_logs]) as session:
             # More explicit prompt to trigger tool call
-            response = session.generate(
+            session.generate(
                 "Use the get_system_logs tool to retrieve the system diagnostic data"
             )
 
@@ -506,27 +508,27 @@ class TestToolIntegration:
             # Get the transcript to verify the actual tool output
             transcript = session.transcript
             tool_outputs = [e for e in transcript if e.get("type") == "tool_output"]
-            assert (
-                len(tool_outputs) > 0
-            ), "Should have at least one tool output in transcript"
+            assert len(tool_outputs) > 0, (
+                "Should have at least one tool output in transcript"
+            )
 
             # Get the actual tool output content
             tool_output_content = tool_outputs[0]["content"]
 
             # Verify output wasn't truncated - check for both start and end markers
-            assert (
-                "START-" in tool_output_content
-            ), "Tool output should contain START marker"
-            assert (
-                "-END" in tool_output_content
-            ), "Tool output should contain END marker"
+            assert "START-" in tool_output_content, (
+                "Tool output should contain START marker"
+            )
+            assert "-END" in tool_output_content, (
+                "Tool output should contain END marker"
+            )
 
             # Verify the output length is close to expected (20KB)
-            assert (
-                len(tool_output_content) >= 20480
-            ), f"Tool output should be at least 20KB, got {len(tool_output_content)} bytes"
+            assert len(tool_output_content) >= 20480, (
+                f"Tool output should be at least 20KB, got {len(tool_output_content)} bytes"
+            )
 
             # Verify the exact data was preserved
-            assert (
-                tool_output_content == large_data
-            ), "Tool output should exactly match the returned data"
+            assert tool_output_content == large_data, (
+                "Tool output should exactly match the returned data"
+            )

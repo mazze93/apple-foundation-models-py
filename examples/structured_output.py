@@ -9,8 +9,10 @@ Demonstrates:
 """
 
 import json
-from applefoundationmodels import Session
+
 from utils import check_availability_or_exit
+
+from applefoundationmodels import Session
 
 
 def main():
@@ -19,7 +21,6 @@ def main():
         return
 
     with Session() as session:
-
         # Example 1: Extract person information
         print("Example 1: Person Information Extraction")
         print("=" * 60)

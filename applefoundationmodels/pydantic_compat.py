@@ -4,7 +4,7 @@ Pydantic compatibility utilities for applefoundationmodels.
 Provides optional Pydantic integration for structured output generation.
 """
 
-from typing import Any, Dict, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Union
 
 if TYPE_CHECKING:
     from pydantic import BaseModel

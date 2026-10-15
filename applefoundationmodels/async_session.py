@@ -6,6 +6,7 @@ Provides async session management, text generation, and async streaming support.
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Coroutine
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -17,7 +18,6 @@ from typing import (
     cast,
     overload,
 )
-from collections.abc import AsyncIterator, Coroutine
 
 from typing_extensions import Literal
 

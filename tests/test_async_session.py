@@ -9,9 +9,8 @@ single streaming smoke test.
 import asyncio
 
 import pytest
-import applefoundationmodels
+
 from applefoundationmodels import AsyncSession
-from conftest import assert_valid_response, assert_valid_chunks
 
 
 class TestAsyncSessionGeneration:
@@ -21,9 +20,9 @@ class TestAsyncSessionGeneration:
         """Test basic async text generation."""
         response = await async_session.generate("What is 2 + 2?", temperature=0.3)
         assert isinstance(response.text, str), "Response should have text property"
-        assert (
-            "4" in response.text or "four" in response.text.lower()
-        ), "Response should contain the answer to 2+2"
+        assert "4" in response.text or "four" in response.text.lower(), (
+            "Response should contain the answer to 2+2"
+        )
 
     async def test_generate_with_temperature(self, async_session, check_availability):
         """Test async generation with different temperatures."""
@@ -40,9 +39,9 @@ class TestAsyncSessionGeneration:
         response_short = await async_session.generate(
             "Write a long story about space exploration", max_tokens=20, temperature=0.5
         )
-        assert isinstance(
-            response_short.text, str
-        ), "Response should have text property"
+        assert isinstance(response_short.text, str), (
+            "Response should have text property"
+        )
 
         response_long = await async_session.generate(
             "Write a long story about space exploration",

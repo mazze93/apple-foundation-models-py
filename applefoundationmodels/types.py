@@ -8,17 +8,18 @@ interaction with the library.
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import (
-    TypedDict,
-    Optional,
-    Callable,
+    TYPE_CHECKING,
     Any,
-    Union,
+    Callable,
     Dict,
     List,
+    Optional,
     Type,
-    TYPE_CHECKING,
+    TypedDict,
+    Union,
     cast,
 )
+
 from typing_extensions import NotRequired
 
 if TYPE_CHECKING:

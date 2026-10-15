@@ -15,10 +15,12 @@ To simulate CI behavior:
 
 import asyncio
 import os
+
 import pytest
+from conftest import assert_valid_chunks, assert_valid_response
+
 import applefoundationmodels
 from applefoundationmodels import Availability
-from conftest import assert_valid_response, assert_valid_chunks
 
 # Skip integration tests in CI environments where Apple Intelligence is not available
 skip_in_ci = pytest.mark.skipif(
@@ -82,7 +84,6 @@ def test_basic_generation():
     print("=" * 60)
 
     with applefoundationmodels.Session() as session:
-
         # Test simple math
         print("Q: What is 7 + 15?")
         response = session.generate("What is 7 + 15?", temperature=0.3)
@@ -121,7 +122,6 @@ def test_conversation_context():
     with applefoundationmodels.Session(
         instructions="You are a helpful assistant. Remember information from previous messages."
     ) as session:
-
         # First message - establish context
         print("User: Remember this: The code name is BLUE42")
         response1 = session.generate("Remember this: The code name is BLUE42")
@@ -191,7 +191,6 @@ def test_temperature_variations():
     print("=" * 60)
 
     with applefoundationmodels.Session() as session:
-
         prompt = "Complete this sentence: The sky is"
 
         # Low temperature (more deterministic)
@@ -232,9 +231,9 @@ def test_session_management():
     response1 = session1.generate("What is 12 * 8?")
     print(f"Response: {response1.text}")
     response1_text = assert_valid_response(response1)
-    assert (
-        "96" in response1_text or "ninety" in response1_text.lower()
-    ), "Math response should contain the answer"
+    assert "96" in response1_text or "ninety" in response1_text.lower(), (
+        "Math response should contain the answer"
+    )
     print()
 
     print("Session 2 (Poetry): Write one line of poetry about the moon")
@@ -245,9 +244,9 @@ def test_session_management():
     print()
 
     # Verify sessions are independent
-    assert (
-        response1_text != response2_text
-    ), "Different sessions should produce different responses"
+    assert response1_text != response2_text, (
+        "Different sessions should produce different responses"
+    )
 
     # Close sessions
     session1.close()
