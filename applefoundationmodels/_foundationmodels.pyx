@@ -385,17 +385,29 @@ def generate(
     result_str = _decode_string(result_c)
     apple_ai_free_string(result_c)
 
-    # Check for error in response
-    if result_str.startswith('{"error"'):
-        try:
-            error_data = json.loads(result_str)
-            error_msg = error_data.get('error', 'Unknown error')
-            error_code = error_data.get('error_code', -6)  # Default to GenerationError
-            raise_for_error_code(error_code, error_msg)
-        except json.JSONDecodeError:
-            pass  # Not JSON, treat as normal response
+    error = _parse_error_payload(result_str)
+    if error is not None:
+        raise_for_error_code(error[0], error[1])
 
     return result_str
+
+
+def _parse_error_payload(text):
+    """Return (error_code, message) if `text` is a Swift error payload, else None.
+
+    Swift reports failures as `{"error": ..., "error_code": ...}` through the
+    same channel as model output, and JSONSerialization does not guarantee key
+    order - so match on the exact key set, not a string prefix.
+    """
+    if not text.startswith("{"):
+        return None
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict) or set(data) != {"error", "error_code"}:
+        return None
+    return int(data["error_code"]), str(data["error"])
 
 
 # ============================================================================
@@ -552,10 +564,27 @@ def generate_stream(
     # "the" registered stream can't disturb the one that did. The lock
     # makes the check-then-set atomic - without it, two threads could both
     # observe "nothing registered" before either writes.
+    #
+    # Swift reports a mid-stream failure as an error-payload chunk followed by
+    # the end-of-stream None. Forwarding those would hand the consumer the
+    # error JSON as model text and then stop it before the exception arrives,
+    # so hold both back and raise the typed error once the call returns.
+    stream_error = []
+
+    def forward(chunk):
+        if stream_error:
+            return  # swallow the end-of-stream signal that follows the error
+        if chunk is not None:
+            error = _parse_error_payload(chunk)
+            if error is not None:
+                stream_error.append(error)
+                return
+        callback(chunk)
+
     with _stream_callbacks_lock:
         registered_here = session_id not in _stream_callbacks
         if registered_here:
-            _stream_callbacks[session_id] = callback
+            _stream_callbacks[session_id] = forward
 
     try:
         with nogil:
@@ -566,11 +595,13 @@ def generate_stream(
                 tokens_c,
                 _stream_callback_wrapper
             )
+        if stream_error:
+            raise_for_error_code(stream_error[0][0], stream_error[0][1])
         _check_result(result)
     finally:
         if registered_here:
             with _stream_callbacks_lock:
-                if _stream_callbacks.get(session_id) is callback:
+                if _stream_callbacks.get(session_id) is forward:
                     _stream_callbacks.pop(session_id, None)
 
 
