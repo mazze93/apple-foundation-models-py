@@ -4,7 +4,7 @@ Pydantic compatibility utilities for applefoundationmodels.
 Provides optional Pydantic integration for structured output generation.
 """
 
-from typing import TYPE_CHECKING, Any, Dict, Union
+from typing import TYPE_CHECKING, Any, Dict, Type, Union
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -32,7 +32,7 @@ def require_pydantic() -> None:
         )
 
 
-def model_to_schema(model: "BaseModel") -> Dict[str, Any]:
+def model_to_schema(model: Union["BaseModel", Type["BaseModel"]]) -> Dict[str, Any]:
     """
     Convert a Pydantic model to JSON Schema.
 
@@ -113,7 +113,9 @@ def is_pydantic_model(obj: Any) -> bool:
     return False
 
 
-def normalize_schema(schema: Union[Dict[str, Any], "BaseModel"]) -> Dict[str, Any]:
+def normalize_schema(
+    schema: Union[Dict[str, Any], "BaseModel", Type["BaseModel"]],
+) -> Dict[str, Any]:
     """
     Normalize schema input to JSON Schema dict.
 

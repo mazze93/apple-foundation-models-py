@@ -26,6 +26,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "pydantic" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -44,6 +45,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=0.991" },
+    { name = "pydantic", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "pydantic", marker = "extra == 'pydantic'", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.20" },

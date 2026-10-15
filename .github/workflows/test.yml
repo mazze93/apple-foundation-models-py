@@ -46,7 +46,7 @@ jobs:
         run: |
           uv venv .test-venv
           source .test-venv/bin/activate
-          uv pip install dist/*.whl pytest pytest-asyncio pytest-cov
+          uv pip install dist/*.whl pytest pytest-asyncio pytest-cov pydantic
 
       - name: Check Apple Intelligence availability
         run: |
@@ -117,4 +117,3 @@ jobs:
       - name: Type check with mypy
         run: |
           uv run mypy applefoundationmodels/
-        continue-on-error: true

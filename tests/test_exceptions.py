@@ -224,3 +224,34 @@ class TestErrorJSONParsing:
 
         # Should not raise - JSONDecodeError is caught
         self._simulate_cython_error_handling(malformed)  # No exception
+
+
+class TestTypeCheckingDeclarations:
+    """The TYPE_CHECKING block in exceptions.py must mirror error_codes.json."""
+
+    def test_static_declarations_match_error_codes_json(self):
+        import ast
+        import inspect
+
+        from applefoundationmodels import exceptions
+
+        tree = ast.parse(inspect.getsource(exceptions))
+        declared = {}
+        for node in tree.body:
+            if (
+                isinstance(node, ast.If)
+                and isinstance(node.test, ast.Name)
+                and node.test.id == "TYPE_CHECKING"
+            ):
+                for cls in node.body:
+                    if isinstance(cls, ast.ClassDef):
+                        declared[cls.name] = cls.bases[0].id
+
+        expected = {
+            d.name: d.parent
+            for d in exceptions.get_error_definitions()
+            if d.name != "GenerationError"
+        }
+        assert declared == expected, (
+            "exceptions.py TYPE_CHECKING block drifted from error_codes.json"
+        )
