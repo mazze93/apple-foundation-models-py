@@ -55,6 +55,10 @@ cdef extern from "../applefoundationmodels/swift/foundation_models.h":
     int32_t apple_ai_check_availability() nogil
     char *apple_ai_get_availability_reason() nogil
 
+    # Model-level token accounting
+    int32_t apple_ai_context_size() nogil
+    int32_t apple_ai_token_count(const char *text) nogil
+
     # Session management. Returns a positive session_id on success, or a
     # negative AIResult error code. tools_json (may be NULL) is a JSON array
     # of tool definitions bound to this session only.

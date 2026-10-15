@@ -133,6 +133,33 @@ def is_ready() -> bool:
     return status == 1  # AI_AVAILABLE = 1
 
 
+def context_size() -> int:
+    """Return the on-device model's context window size in tokens."""
+    cdef int32_t size
+    with nogil:
+        size = apple_ai_context_size()
+    if size < 0:
+        raise_for_error_code(size, "Failed to read model context size")
+    return size
+
+
+def token_count(text: str) -> int:
+    """Return how many tokens `text` uses as a prompt (macOS 26.4+)."""
+    cdef bytes text_bytes = _encode_string(text)
+    cdef const char *text_c = text_bytes
+    cdef int32_t count
+    with nogil:
+        count = apple_ai_token_count(text_c)
+    if count < 0:
+        raise_for_error_code(
+            count,
+            "Token counting requires macOS 26.4 or newer"
+            if count == -2
+            else "Token counting failed",
+        )
+    return count
+
+
 # ============================================================================
 # Tool calling
 # ============================================================================

@@ -652,6 +652,26 @@ class BaseSession(ContextManagedResource, ABC):
         return ready
 
     @staticmethod
+    def context_size() -> int:
+        """
+        Get the on-device model's context window size in tokens.
+
+        The window is shared by instructions, history, the prompt, and the
+        response within one session.
+        """
+        return cast(int, get_foundationmodels().context_size())
+
+    @staticmethod
+    def token_count(text: str) -> int:
+        """
+        Count the tokens `text` would use as a prompt.
+
+        Requires macOS 26.4+; raises NotAvailableError on older systems.
+        Useful for checking input against context_size() before generating.
+        """
+        return cast(int, get_foundationmodels().token_count(text))
+
+    @staticmethod
     def get_version() -> str:
         """
         Get library version string.

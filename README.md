@@ -11,7 +11,7 @@ Unofficial Python bindings for Apple's [Foundation Models framework](https://dev
 
 ## Limitations
 
-- **Context Window**: 4,096 tokens per session (includes instructions, prompts, and outputs)
+- **Context Window**: model-dependent, per session (includes instructions, prompts, and outputs) — 8,192 tokens on macOS 27, 4,096 on macOS 26. Query it with `Session.context_size()`; count input with `Session.token_count(text)` (macOS 26.4+)
 
 ## Requirements
 
@@ -406,7 +406,7 @@ All exceptions inherit from `FoundationModelsError`:
 **Generation Errors** (all inherit from `GenerationError`):
 
 - `GenerationError` - Generic text generation error
-- `ContextWindowExceededError` - Context window limit exceeded (4096 tokens)
+- `ContextWindowExceededError` - Context window limit exceeded (see `Session.context_size()`)
 - `AssetsUnavailableError` - Required model assets are unavailable
 - `DecodingFailureError` - Failed to deserialize model output
 - `GuardrailViolationError` - Content blocked by safety filters

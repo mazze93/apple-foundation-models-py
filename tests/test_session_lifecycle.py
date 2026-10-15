@@ -43,6 +43,21 @@ class TestSessionInfo:
         assert isinstance(version, str)
         assert len(version) > 0
 
+    def test_context_size_is_positive(self, check_availability):
+        size = applefoundationmodels.Session.context_size()
+        assert isinstance(size, int)
+        assert size >= 4096
+
+    def test_token_count_grows_with_input(self, check_availability):
+        count = applefoundationmodels.Session.token_count
+        short, long = count("hi"), count("The quick brown fox. " * 100)
+        assert 0 < short < long
+
+    def test_oversized_input_exceeds_context_size(self, check_availability):
+        text = "The quick brown fox jumps over the lazy dog. " * 2000
+        Session = applefoundationmodels.Session
+        assert Session.token_count(text) > Session.context_size()
+
 
 class TestSessionLifecycle:
     """Tests for session lifecycle management."""

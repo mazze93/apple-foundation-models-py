@@ -36,6 +36,13 @@ const char *apple_ai_get_version(void);
 int32_t apple_ai_check_availability(void);
 char *apple_ai_get_availability_reason(void);
 
+// Model-level token accounting (not per-session).
+// Context window size in tokens, or a negative ai_result_t on failure.
+int32_t apple_ai_context_size(void);
+// Token count for `text` as a prompt, or a negative ai_result_t on failure
+// (AI_ERROR_NOT_AVAILABLE on systems older than macOS 26.4).
+int32_t apple_ai_token_count(const char *text);
+
 // Session management.
 // Creates an independent, isolated session and returns its session_id
 // (a positive integer) on success, or a negative AIResult error code.

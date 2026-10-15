@@ -385,6 +385,41 @@ public func appleAICleanup() {
 
 // MARK: - Availability Check
 
+/// Context window size of the default on-device model, in tokens.
+@_cdecl("apple_ai_context_size")
+public func appleAIContextSize() -> Int32 {
+    #if canImport(FoundationModels)
+    if #available(macOS 26.0, *) {
+        return Int32(clamping: SystemLanguageModel.default.contextSize)
+    }
+    #endif
+    return AIResult.errorNotAvailable.rawValue
+}
+
+/// Token count of `text` treated as a prompt. Negative AIResult on failure.
+@_cdecl("apple_ai_token_count")
+public func appleAITokenCount(text: UnsafePointer<CChar>) -> Int32 {
+    #if canImport(FoundationModels)
+    if #available(macOS 26.4, *) {
+        let prompt = String(cString: text)
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Int32 = AIResult.errorUnknown.rawValue
+        Task {
+            do {
+                let count = try await SystemLanguageModel.default.tokenCount(for: prompt)
+                result = Int32(clamping: count)
+            } catch {
+                result = mapGenerationErrorToCode(error).rawValue
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
+    }
+    #endif
+    return AIResult.errorNotAvailable.rawValue
+}
+
 @_cdecl("apple_ai_check_availability")
 public func appleAICheckAvailability() -> Int32 {
     #if canImport(FoundationModels)

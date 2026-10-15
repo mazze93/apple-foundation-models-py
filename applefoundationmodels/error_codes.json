@@ -95,7 +95,7 @@
     "name": "ContextWindowExceededError",
     "swift_case": "errorContextWindowExceeded",
     "parent": "GenerationError",
-    "description": "Context window size limit exceeded (4096 tokens)."
+    "description": "Context window size limit exceeded."
   },
   {
     "code": -15,
