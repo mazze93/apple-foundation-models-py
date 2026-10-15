@@ -5,12 +5,18 @@ These tests verify that tools can be registered and called by the model
 with various parameter signatures and types.
 """
 
+import typing
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
 import pytest
+import typing_extensions
 
 from applefoundationmodels import Session
+from applefoundationmodels.tools import (
+    extract_function_schema,
+    python_type_to_json_schema,
+)
 
 
 class ToolTestHarness:
@@ -170,34 +176,42 @@ class TestToolRegistration:
         assert len(response.tool_calls) > 0, "At least one tool call expected"
         assert response.tool_calls[0].function.name == "get_top_items"
 
-    def test_tool_with_optional_parameters(self, check_availability):
-        """Test tool with optional parameters and defaults."""
-        called = {}
-
-        def calculate(x: int, y: int, operation: str = "add") -> str:
-            """Perform a calculation."""
-            called["x"] = x
-            called["y"] = y
-            called["operation"] = operation
-
-            operations = {
-                "add": x + y,
-                "subtract": x - y,
-                "multiply": x * y,
-                "times": x * y,
-                "multiplication": x * y,
-            }
-            result = operations.get(operation, "unknown")
+    @staticmethod
+    def _make_calculator(called: Dict[str, Any]) -> Callable:
+        def calculate(
+            x: int,
+            y: int,
+            operation: typing.Literal["add", "subtract", "multiply"] = "add",
+        ) -> str:
+            """Perform arithmetic on two integers."""
+            called.update(x=x, y=y, operation=operation)
+            result = {"add": x + y, "subtract": x - y, "multiply": x * y}[operation]
             return f"Result: {result}"
 
-        session = Session(tools=[calculate])
+        return calculate
+
+    def test_tool_with_optional_parameters(self, check_availability):
+        """A defaulted parameter may be omitted; the Python default then applies.
+
+        Whether the model sends operation="add" explicitly or leaves it out,
+        the call must succeed with the right operands and result.
+        """
+        called: Dict[str, Any] = {}
+        session = Session(tools=[self._make_calculator(called)])
+        response = session.generate("What is 15 plus 7?")
+
+        assert {called.get("x"), called.get("y")} == {15, 7}
+        assert called.get("operation") == "add"
+        assert "22" in response.text
+
+    def test_tool_optional_parameter_can_be_overridden(self, check_availability):
+        """The model can still choose a non-default value for an optional parameter."""
+        called: Dict[str, Any] = {}
+        session = Session(tools=[self._make_calculator(called)])
         response = session.generate("What is 15 times 7?")
 
-        assert "x" in called
-        assert "y" in called
-        assert "operation" in called
-        # Should use multiply operation
-        assert called["operation"] in ["multiply", "times", "multiplication"]
+        assert {called.get("x"), called.get("y")} == {15, 7}
+        assert called.get("operation") == "multiply"
         assert "105" in response.text
 
 
@@ -532,3 +546,78 @@ class TestToolIntegration:
             assert tool_output_content == large_data, (
                 "Tool output should exactly match the returned data"
             )
+
+
+class TestToolSchemaGeneration:
+    """Model-free checks of the JSON Schema handed to the native layer.
+
+    The Swift side treats a schema without `required` as "every property is
+    required", which once forced the model to invent values for defaulted
+    parameters (e.g. ``operation="*"``) or stall asking for them instead of
+    calling the tool. These pin the contract that prevents that.
+    """
+
+    def test_required_lists_only_parameters_without_defaults(self):
+        def calculate(x: int, y: int, operation: str = "add") -> str:
+            """Perform a calculation."""
+            return ""
+
+        params = extract_function_schema(calculate)["parameters"]
+        assert params["required"] == ["x", "y"]
+
+    def test_required_is_emitted_even_when_empty(self):
+        def get_weather(location: Optional[str] = None, units: str = "celsius") -> str:
+            """Get weather information."""
+            return ""
+
+        params = extract_function_schema(get_weather)["parameters"]
+        assert params["required"] == []
+
+    def test_default_is_surfaced_in_description(self):
+        def calculate(x: int, operation: str = "add") -> str:
+            """Perform a calculation."""
+            return ""
+
+        props = extract_function_schema(calculate)["parameters"]["properties"]
+        assert "'add'" in props["operation"]["description"]
+        assert "description" not in props["x"]
+
+    def test_optional_annotation_unwraps_to_inner_type(self):
+        def get_weather(location: Optional[str] = None) -> str:
+            """Get weather information."""
+            return ""
+
+        props = extract_function_schema(get_weather)["parameters"]["properties"]
+        assert props["location"]["type"] == "string"
+        # None default carries no useful hint for the model
+        assert "description" not in props["location"]
+
+    @pytest.mark.parametrize("literal", [typing.Literal, typing_extensions.Literal])
+    def test_string_literal_becomes_enum(self, literal):
+        schema = python_type_to_json_schema(literal["add", "subtract", "multiply"])
+        assert schema == {"type": "string", "enum": ["add", "subtract", "multiply"]}
+
+    def test_non_string_literal_falls_back_to_value_type(self):
+        assert python_type_to_json_schema(typing.Literal[1, 2, 3]) == {
+            "type": "integer"
+        }
+
+    def test_literal_tool_registers_and_is_called_with_enum_value(
+        self, check_availability
+    ):
+        """End-to-end: an enum-constrained tool is accepted by the Swift layer."""
+        called = {}
+
+        def calculate(
+            x: int,
+            y: int,
+            operation: typing.Literal["add", "subtract", "multiply"] = "add",
+        ) -> str:
+            """Perform arithmetic on two integers."""
+            called["operation"] = operation
+            return f"Result: {x * y if operation == 'multiply' else x + y}"
+
+        with Session(tools=[calculate]) as session:
+            session.generate("Use the calculate tool to multiply 15 by 7.")
+
+        assert called.get("operation") in {"add", "subtract", "multiply"}

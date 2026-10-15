@@ -6,6 +6,7 @@ and managing tool registrations.
 """
 
 import inspect
+import typing
 from typing import (
     Any,
     Callable,
@@ -17,7 +18,14 @@ from typing import (
     get_type_hints,
 )
 
+import typing_extensions
+
 from .exceptions import ToolCallError
+
+# typing_extensions re-implements Literal on older Pythons, so match either origin
+_LITERAL_ORIGINS = {getattr(typing, "Literal", None), typing_extensions.Literal} - {
+    None
+}
 
 # Type mapping for efficient schema generation
 # Maps Python types and their string names to JSON schema types
@@ -133,6 +141,14 @@ def python_type_to_json_schema(python_type: Any) -> Dict[str, Any]:
     # Get origin for generic types
     origin = get_origin(python_type)
 
+    # Literal["a", "b"] -> string enum (the Swift layer maps enum to anyOf)
+    if origin in _LITERAL_ORIGINS:
+        values = list(get_args(python_type))
+        if values and all(isinstance(v, str) for v in values):
+            return {"type": "string", "enum": values}
+        first = type(values[0]) if values else str
+        return {"type": _TYPE_MAP.get(first, "string")}
+
     # Handle container types
     if python_type is list or origin is list:
         return _handle_list_type(python_type)
@@ -190,20 +206,27 @@ def extract_function_schema(func: Callable) -> Dict[str, Any]:
             else:
                 param_schema = python_type_to_json_schema(param_type)
 
-            properties[param_name] = param_schema
-
-            # Mark as required if no default value
+            # Mark as required if no default value; otherwise surface the
+            # default to the model, since the native schema has no `default`
             if param.default is inspect.Parameter.empty:
                 required.append(param_name)
+            elif param.default is not None:
+                param_schema = {
+                    **param_schema,
+                    "description": f"Optional. Defaults to {param.default!r}.",
+                }
+
+            properties[param_name] = param_schema
 
         # Build parameters schema
+        # Always emit `required` (even empty): the Swift layer treats a missing
+        # `required` as "everything required", which would force the model to
+        # invent values for defaulted parameters.
         parameters_schema = {
             "type": "object",
             "properties": properties,
+            "required": required,
         }
-
-        if required:
-            parameters_schema["required"] = required
 
         # Extract description from docstring
         description = ""

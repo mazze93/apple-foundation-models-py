@@ -917,6 +917,12 @@ private func convertObjectType(
 
     var dynamicProperties: [DynamicGenerationSchema.Property] = []
 
+    // Honor JSON Schema `required` when present: anything not listed is optional,
+    // so the model may omit it (tool calls then fall back to the Python default).
+    // When `required` is absent, keep treating every property as required so
+    // existing structured-output schemas that never declared it don't change meaning.
+    let requiredNames = (schema["required"] as? [String]).map(Set.init)
+
     for (propName, propSchema) in properties {
         let propPath = path + [propName]
 
@@ -930,7 +936,8 @@ private func convertObjectType(
                 DynamicGenerationSchema.Property(
                     name: propName,
                     description: description,
-                    schema: propDynamicSchema
+                    schema: propDynamicSchema,
+                    isOptional: requiredNames.map { !$0.contains(propName) } ?? false
                 )
             )
         case .failure(let error):
