@@ -1,4 +1,4 @@
-"""Setup script for apple-foundation-models-py Python bindings."""
+z """Setup script for apple-foundation-models-py Python bindings."""
 
 import json
 import os
