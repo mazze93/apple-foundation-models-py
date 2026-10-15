@@ -823,19 +823,12 @@ public func appleAIGetTranscript(sessionID: Int32) -> UnsafeMutablePointer<CChar
                         // Extract content from segments
                         // API: ToolOutput exposes id, toolName, and segments (array of Segment)
                         // Note: FoundationModels API uses segments rather than direct content property
-                        var contentParts: [String] = []
-                        for segment in output.segments {
-                            switch segment {
-                            case .text(let textSegment):
-                                contentParts.append(textSegment.content)
-                            case .structure(let structuredSegment):
-                                // For structured segments, use the JSON representation
-                                contentParts.append(structuredSegment.content.jsonString)
-                            @unknown default:
-                                break
-                            }
-                        }
-                        entryDict["content"] = contentParts.joined() as NSString
+                        entryDict["content"] = transcriptSegmentsText(output.segments) as NSString
+
+                    case .reasoning(let reasoning):
+                        // macOS 27+; never matches on macOS 26.
+                        entryDict["type"] = "reasoning" as NSString
+                        entryDict["content"] = transcriptSegmentsText(reasoning.segments) as NSString
 
                     @unknown default:
                         entryDict["type"] = "unknown" as NSString
@@ -877,6 +870,28 @@ struct SchemaConversionError: Error {
         let pathStr = path.isEmpty ? "root" : path.joined(separator: ".")
         return "Schema conversion failed at '\(pathStr)': \(reason)"
     }
+}
+
+// Join a transcript entry's segments into plain text. Structured segments use
+// their JSON form; macOS 27 attachment segments carry no text, so they render
+// as a labelled placeholder rather than vanishing from the output.
+@available(macOS 26.0, *)
+private func transcriptSegmentsText(_ segments: [Transcript.Segment]) -> String {
+    var parts: [String] = []
+    for segment in segments {
+        switch segment {
+        case .text(let textSegment):
+            parts.append(textSegment.content)
+        case .structure(let structuredSegment):
+            parts.append(structuredSegment.content.jsonString)
+        case .attachment(let attachment):
+            // macOS 27+; never matches on macOS 26.
+            parts.append("[attachment\(attachment.label.map { ": \($0)" } ?? "")]")
+        @unknown default:
+            break
+        }
+    }
+    return parts.joined()
 }
 
 // Helper to convert primitive type to DynamicGenerationSchema
