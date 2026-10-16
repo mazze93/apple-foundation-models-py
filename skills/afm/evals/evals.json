@@ -1,0 +1,45 @@
+{
+  "skill_name": "afm",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "I've got 8 customer notes in /private/tmp/claude-501/-Users-daedalus-Projects-tools-apple-foundation-models-py/2b3d6a02-b9ec-4e79-b569-c404b988dd9d/scratchpad/afm-workspace/fixtures/notes/. They're from customers so I'd rather you didn't read them directly. Can you sort each one into bug, feature request, or question and give me a table (filename, label, one-line summary)? Save it as labels.md.",
+      "expected_output": "labels.md table with all 8 notes labelled; notes processed via afm without being read",
+      "files": [],
+      "assertions": [
+        "All 8 notes appear in the table",
+        "Every label is bug / feature request / question",
+        ">=7 of 8 labels match ground truth",
+        "Processed the notes with afm",
+        "Constrained labels with --schema",
+        "Did not read the notes into its own context"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "/private/tmp/claude-501/-Users-daedalus-Projects-tools-apple-foundation-models-py/2b3d6a02-b9ec-4e79-b569-c404b988dd9d/scratchpad/afm-workspace/fixtures/design-doc.md is our internal design doc. Keep it on-device, I don't want the raw text going to the cloud. Give me the 5-8 most important points as digest.md.",
+      "expected_output": "digest.md with 5-8 points covering the whole doc (not only its start); doc processed on-device via chunking, not read directly",
+      "files": [],
+      "assertions": [
+        "Digest has 5-8 points",
+        "Processed the doc with afm",
+        "Did not read the doc into its own context",
+        "Covers the README part (start of doc)",
+        "Covers the later CLAUDE.md/tests part (end of doc)",
+        "Did not rely on --truncate alone"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "There are 6 patch files in /private/tmp/claude-501/-Users-daedalus-Projects-tools-apple-foundation-models-py/2b3d6a02-b9ec-4e79-b569-c404b988dd9d/scratchpad/afm-workspace/fixtures/patches/. Write a one-line summary for each (filename: summary) into summaries.txt. Use the local model for the summaries to save tokens.",
+      "expected_output": "summaries.txt with 6 lines, one per patch, produced via afm",
+      "files": [],
+      "assertions": [
+        "6 lines, one per patch file",
+        "Summaries produced with afm",
+        "No model preamble/chatter in summaries",
+        ">=5 of 6 summaries name the commit's actual topic"
+      ]
+    }
+  ]
+}
